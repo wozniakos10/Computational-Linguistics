@@ -1,11 +1,10 @@
 import tiktoken
 import torch
-import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 from speakleash import Speakleash
 import os
 from speakleash.dataset import SpeakleashDataset
-from typing import Optional, List
+
 
 class PlWikiDataset(Dataset):
     def __init__(self, plwiki: SpeakleashDataset, tokenizer, max_length, stride, max_docs, split="train", train_ratio=0.8, val_ratio=0.1):
