@@ -215,3 +215,6 @@ __marimo__/
 large_models/
 datasets/
 *.code-workspace
+
+mlruns/
+mlartifacts/

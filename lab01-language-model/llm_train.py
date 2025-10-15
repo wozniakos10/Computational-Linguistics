@@ -1,6 +1,7 @@
 # Playing with and adjusting for my use-case: https://github.com/rasbt/LLMs-from-scratch
 
 import matplotlib.pyplot as plt
+import mlflow
 
 import torch
 import tiktoken
@@ -11,6 +12,9 @@ from dataset import create_plwiki_dataloader
 from logger import get_configured_logger
 
 logger = get_configured_logger("gpt_train", log_file="logs/gpt_train.log")
+remote_server_uri = "http://127.0.0.1:8080"
+mlflow.set_tracking_uri(remote_server_uri)
+mlflow.set_experiment("/language-model-transformer")
 
 
 def text_to_token_ids(text, tokenizer):
@@ -65,6 +69,7 @@ def generate_and_print_sample(model, tokenizer, device, start_context):
         token_ids = generate_text_simple(model=model, idx=encoded, max_new_tokens=50, context_size=context_size)
         decoded_text = token_ids_to_text(token_ids, tokenizer)
         logger.info(f"Sample text generation with context: '{start_context}'\ngenerated text: '{decoded_text.replace('\n', ' ')}'")
+        mlflow.log_text(decoded_text, "artifacts/generated_text.txt")
     model.train()
 
 
@@ -93,7 +98,15 @@ def train_model_simple(model, train_loader, val_loader, optimizer, device, num_e
                 val_losses.append(val_loss)
                 track_tokens_seen.append(tokens_seen)
                 logger.info(f"Epoch: {epoch + 1} (Step {global_step:06d}): Train loss {train_loss:.3f}, Val loss {val_loss:.3f}")
-
+                mlflow.log_metrics(
+                    {
+                        "train_loss": train_loss,
+                        "val_loss": val_loss,
+                        "tokens_seen": tokens_seen,
+                        "epoch": epoch + 1,
+                    },
+                    step=global_step,
+                )
                 # Print a sample text after each epoch
                 generate_and_print_sample(model, tokenizer, device, start_context)
 
@@ -139,7 +152,7 @@ def evaluate_test_model(model, test_loader, device, tokenizer, start_context="Ev
     # print(f"Test Perplexity: {perplexity:.4f}")
 
     model.train()  # Reset to training mode
-
+    logger.info(f"Test loss: {test_loss:.4f}")
     return {"test_loss": test_loss, "sample_text": decoded_text}
 
 
@@ -238,32 +251,35 @@ if __name__ == "__main__":
     ###########################
     # Initiate training
     ###########################
+    with mlflow.start_run():
+        mlflow.log_params(GPT_CONFIG_124M)
+        mlflow.log_params(OTHER_SETTINGS)
+        train_losses, val_losses, tokens_seen, model, test_loader = main(GPT_CONFIG_124M, OTHER_SETTINGS)
 
-    train_losses, val_losses, tokens_seen, model, test_loader = main(GPT_CONFIG_124M, OTHER_SETTINGS)
+        ###########################
+        # After training
+        ###########################
 
-    ###########################
-    # After training
-    ###########################
+        # Plot results
+        epochs_tensor = torch.linspace(0, OTHER_SETTINGS["num_epochs"], len(train_losses))
+        plot_losses(epochs_tensor, tokens_seen, train_losses, val_losses)
+        plt.savefig("loss.pdf")
 
-    # Plot results
-    epochs_tensor = torch.linspace(0, OTHER_SETTINGS["num_epochs"], len(train_losses))
-    plot_losses(epochs_tensor, tokens_seen, train_losses, val_losses)
-    plt.savefig("loss.pdf")
+        # Evaluate model on test data
+        tokenizer = tiktoken.get_encoding("gpt2")
+        test_results = evaluate_test_model(
+            model,
+            test_loader,
+            device=torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"),
+            tokenizer=tokenizer,
+            start_context="Every effort moves you",
+        )
+        mlflow.log_metrics({"test_loss": test_results["test_loss"]})
 
-    # Evaluate model on test data
-    tokenizer = tiktoken.get_encoding("gpt2")
-    test_results = evaluate_test_model(
-        model,
-        test_loader,
-        device=torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"),
-        tokenizer=tokenizer,
-        start_context="Every effort moves you",
-    )
+        # Save and load model
+        torch.save(model.state_dict(), "model.pth")
+        model = GPTModel(GPT_CONFIG_124M)
+        model.load_state_dict(torch.load("model.pth", weights_only=True))
 
-    # Save and load model
-    torch.save(model.state_dict(), "model.pth")
-    model = GPTModel(GPT_CONFIG_124M)
-    model.load_state_dict(torch.load("model.pth", weights_only=True))
-
-    print("\nFinal Test Results:")
-    print(f"Test Loss: {test_results['test_loss']:.4f}")
+        print("\nFinal Test Results:")
+        print(f"Test Loss: {test_results['test_loss']:.4f}")

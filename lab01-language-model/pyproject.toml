@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "matplotlib>=3.10.7",
+    "mlflow>=3.4.0",
     "pandas>=2.3.3",
     "pre-commit>=4.3.0",
     "ruff>=0.14.0",
