@@ -213,3 +213,5 @@ __marimo__/
 .vscode/
 
 large_models/
+datasets/
+*.code-workspace
