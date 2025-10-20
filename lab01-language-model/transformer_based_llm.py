@@ -3,6 +3,7 @@
 import tiktoken
 import torch
 import torch.nn as nn
+from torch.nn import functional as F
 
 
 class MultiHeadAttention(nn.Module):
@@ -19,6 +20,22 @@ class MultiHeadAttention(nn.Module):
         self.W_value = nn.Linear(d_in, d_out, bias=qkv_bias)
         self.out_proj = nn.Linear(d_out, d_out)  # Linear layer to combine head outputs
         self.dropout = nn.Dropout(dropout)
+
+        # To maskowanie de facto tworzy nam dekoder - generujac przyszly tokeny nie widzimy przyszlosci i
+        # zakrywamy jes maska w postaci macierzy trojkatnej gornej
+        #
+        # [token, -inf, -inf]
+        # [token, token, -inf]
+        # [token, token, token]
+        #
+        # -inf daje sie dlatego, ze potem maska trafia do softmax i mamy exp(-inf) = 0, czyli nie bierzemy pod uwage
+        # tych wartosci przy sumowaniu.
+        # Jest to self attention, bo atencje wykonujemy na tej samej sewkencji - dostajemy wtedy informacje
+        # jak sekwencja wplywa sama na siebie. Jezeli bylby dekoder, to nie mamy maski i moglibysmy patrzec na cala
+        # sewkencje np. do okreslania sentymentu. Cross attention to interakcja miedzy roznymmi sekwencjami
+        # np w attentsion is all you need mamy encoder-decoder i cross attention w dekoderze ale to
+        # dlatego ze tam bylo zadanie tlumaczenia jezyka na inny i mozna to tak zastosowac.
+
         self.register_buffer("mask", torch.triu(torch.ones(context_length, context_length), diagonal=1))
 
     def forward(self, x):
@@ -77,6 +94,7 @@ class FeedForward(nn.Module):
 class TransformerBlock(nn.Module):
     def __init__(self, cfg):
         super().__init__()
+        # from scratch
         # self.att = MultiHeadAttention(
         #     d_in=cfg["emb_dim"],
         #     d_out=cfg["emb_dim"],
@@ -85,6 +103,7 @@ class TransformerBlock(nn.Module):
         #     dropout=cfg["drop_rate"],
         #     qkv_bias=cfg["qkv_bias"])
 
+        # pytorch module
         self.att = nn.MultiheadAttention(
             embed_dim=cfg["emb_dim"], num_heads=cfg["n_heads"], dropout=cfg["drop_rate"], bias=cfg["qkv_bias"], batch_first=True
         )
@@ -94,17 +113,21 @@ class TransformerBlock(nn.Module):
         self.drop_shortcut = nn.Dropout(cfg["drop_rate"])
 
     def forward(self, x):
-        # Shortcut connection for attention block
+        # Shortcut connection for attention block (redisual connection)
         shortcut = x
         x = self.norm1(x)
 
-        # Create causal mask for self-attention
+        # # Create causal mask for self-attention
         seq_len = x.size(1)
         causal_mask = torch.triu(torch.ones(seq_len, seq_len), diagonal=1).bool()
         causal_mask = causal_mask.to(x.device)
 
         # PyTorch MultiheadAttention expects (query, key, value) and returns (output, attention_weights)
+        # z racji ze to self attetion, zamiast q,k,v podajemy to samo x
         x, _ = self.att(x, x, x, attn_mask=causal_mask, need_weights=False)
+
+        # for sratch implementation
+        # x = self.att(x)
         x = self.drop_shortcut(x)
         x = x + shortcut  # Add the original input back
 
@@ -139,7 +162,14 @@ class GPTModel(nn.Module):
         self.out_head = nn.Linear(cfg["emb_dim"], cfg["vocab_size"], bias=False)
 
     def forward(self, in_idx):
+        # #Just for make it work with torchsummary
+        # print(len(in_idx.shape))
+        # if len(in_idx.shape) == 3:
+        #     print("test")
+        #     _, batch_size, seq_len = in_idx.shape
+        # else:
         batch_size, seq_len = in_idx.shape
+
         tok_embeds = self.tok_emb(in_idx)
         pos_embeds = self.pos_emb(torch.arange(seq_len, device=in_idx.device))
         x = tok_embeds + pos_embeds  # Shape [batch_size, num_tokens, emb_size]
@@ -150,14 +180,18 @@ class GPTModel(nn.Module):
         return logits
 
 
-def generate_text_simple(model, idx, max_new_tokens, context_size):
+def temperature_scaled_softmax(logits, temperature=1.0):
+    logits = logits / temperature
+    return F.softmax(logits, dim=-1)
+
+
+def generate_text_simple(model, idx, max_new_tokens, context_size, temperature=1.0, use_sampling=True):
     # idx is (B, T) array of indices in the current context
     for _ in range(max_new_tokens):
         # Crop current context if it exceeds the supported context size
         # E.g., if LLM supports only 5 tokens, and the context size is 10
         # then only the last 5 tokens are used as context
         idx_cond = idx[:, -context_size:]
-
         # Get the predictions
         with torch.no_grad():
             logits = model(idx_cond)
@@ -166,8 +200,18 @@ def generate_text_simple(model, idx, max_new_tokens, context_size):
         # (batch, n_token, vocab_size) becomes (batch, vocab_size)
         logits = logits[:, -1, :]
 
-        # Get the idx of the vocab entry with the highest logits value
-        idx_next = torch.argmax(logits, dim=-1, keepdim=True)  # (batch, 1)
+        # apply softmax to get probabilities
+        # probs = F.softmax(logits, dim=-1) # (B, C)
+
+        if use_sampling:
+            # Custom implementation with temperature scaling
+            probs = temperature_scaled_softmax(logits, temperature)
+            # sample from the distribution
+            idx_next = torch.multinomial(probs, num_samples=1)  # (B, 1)
+
+        else:
+            # Get the idx of the vocab entry with the highest logits value
+            idx_next = torch.argmax(logits, dim=-1, keepdim=True)  # (batch, 1)
 
         # Append sampled index to the running sequence
         idx = torch.cat((idx, idx_next), dim=1)  # (batch, n_tokens+1)
@@ -176,9 +220,11 @@ def generate_text_simple(model, idx, max_new_tokens, context_size):
 
 
 def main():
+    from torchinfo import summary
+
     GPT_CONFIG_124M = {
         "vocab_size": 50257,  # Vocabulary size
-        "context_length": 1024,  # Context length
+        "context_length": 256,  # Context length
         "emb_dim": 768,  # Embedding dimension
         "n_heads": 12,  # Number of attention heads
         "n_layers": 12,  # Number of layers
@@ -189,6 +235,17 @@ def main():
     torch.manual_seed(123)
     model = GPTModel(GPT_CONFIG_124M)
     model.eval()  # disable dropout
+    # Print model summary - GPT model expects (batch_size, sequence_length) input of token indices
+    # summary(model, input_size=(1, 13))
+
+    vocab_size = 5000  # ustaw zgodnie z modelem
+    seq_len = 256  # długość sekwencji (tak jak wcześniej)
+
+    # zamiast torch.randn → użyj losowych indeksów całkowitych
+    dummy_input = torch.randint(0, vocab_size, (1, seq_len), dtype=torch.long)
+
+    # teraz użyj torchinfo.summary zamiast torchsummary.summary
+    summary(model, input_data=dummy_input)
 
     start_context = "Hello, I am"
 

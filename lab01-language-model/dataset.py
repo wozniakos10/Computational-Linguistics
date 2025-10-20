@@ -5,6 +5,19 @@ from speakleash import Speakleash
 import os
 from speakleash.dataset import SpeakleashDataset
 
+tokenizer = tiktoken.get_encoding("gpt2")
+
+
+def text_to_token_ids(text, tokenizer):
+    encoded = tokenizer.encode(text)
+    encoded_tensor = torch.tensor(encoded).unsqueeze(0)  # add batch dimension
+    return encoded_tensor
+
+
+def token_ids_to_text(token_ids, tokenizer):
+    flat = token_ids.squeeze(0)  # remove batch dimension
+    return tokenizer.decode(flat.tolist())
+
 
 class PlWikiDataset(Dataset):
     def __init__(self, plwiki: SpeakleashDataset, tokenizer, max_length, stride, max_docs, split="train", train_ratio=0.8, val_ratio=0.1):
@@ -219,3 +232,21 @@ def create_dataloader_v1(txt, batch_size=4, max_length=256, stride=128, shuffle=
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, drop_last=drop_last, num_workers=num_workers)
 
     return dataloader
+
+
+if __name__ == "__main__":
+    file_path = "the-verdict.txt"
+    with open(file_path, "r", encoding="utf-8") as file:
+        text_data = file.read()
+    # loader = create_dataloader_v1(text_data)
+    loader = create_plwiki_dataloader(split="train", batch_size=2, max_docs=10)
+    iter = 0
+    for input_ids, target_ids in loader:
+        print(f"Batch {iter}:")
+        print("Input IDs:", token_ids_to_text(input_ids[0][:200], tokenizer))
+        print("Target IDs:", token_ids_to_text(target_ids[0][:50], tokenizer))
+        # print("Input IDs shape:", input_ids[0][:10])
+        # print("Target IDs shape:", target_ids[0][:10])
+        iter += 1
+        if iter >= 5:
+            break

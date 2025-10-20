@@ -218,3 +218,6 @@ datasets/
 
 mlruns/
 mlartifacts/
+*.DS_Store
+models/
+logs/

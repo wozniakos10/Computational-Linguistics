@@ -2,19 +2,40 @@
 
 import matplotlib.pyplot as plt
 import mlflow
-
+import os
+import requests
 import torch
 import tiktoken
+from models import TransformerModelConfig, ModelTrainingConfig, DataLoaderConfig
 
 # Import from local files
 from transformer_based_llm import GPTModel, generate_text_simple
-from dataset import create_plwiki_dataloader
+from dataset import create_plwiki_dataloader, create_dataloader_v1
 from logger import get_configured_logger
+from torchinfo import summary
 
+
+########################
+# MODEL MONITORING
+############
 logger = get_configured_logger("gpt_train", log_file="logs/gpt_train.log")
 remote_server_uri = "http://127.0.0.1:8080"
 mlflow.set_tracking_uri(remote_server_uri)
 mlflow.set_experiment("/language-model-transformer")
+########################
+# MODEL MONITORING
+############
+
+
+##################
+# GLOBAL VARIABLES
+##################
+optimizer_mapper = {
+    "adamw": torch.optim.AdamW,
+}
+########################
+# GLOBAL VARIABLES
+############
 
 
 def text_to_token_ids(text, tokenizer):
@@ -61,19 +82,31 @@ def evaluate_model(model, train_loader, val_loader, device, eval_iter):
     return train_loss, val_loss
 
 
-def generate_and_print_sample(model, tokenizer, device, start_context):
+def generate_and_print_sample(model: GPTModel, tokenizer, device, start_context, max_new_tokens=50):
     model.eval()
     context_size = model.pos_emb.weight.shape[0]
     encoded = text_to_token_ids(start_context, tokenizer).to(device)
     with torch.no_grad():
-        token_ids = generate_text_simple(model=model, idx=encoded, max_new_tokens=50, context_size=context_size)
+        token_ids = generate_text_simple(model=model, idx=encoded, max_new_tokens=max_new_tokens, context_size=context_size)
         decoded_text = token_ids_to_text(token_ids, tokenizer)
         logger.info(f"Sample text generation with context: '{start_context}'\ngenerated text: '{decoded_text.replace('\n', ' ')}'")
         mlflow.log_text(decoded_text, "artifacts/generated_text.txt")
     model.train()
 
 
-def train_model_simple(model, train_loader, val_loader, optimizer, device, num_epochs, eval_freq, eval_iter, start_context, tokenizer):
+def train_model_simple(
+    model: GPTModel,
+    train_loader,
+    val_loader,
+    optimizer,
+    device,
+    num_epochs,
+    eval_freq,
+    eval_iter,
+    start_context,
+    tokenizer,
+    max_new_tokens=50,
+):
     # Initialize lists to track losses and tokens seen
     train_losses, val_losses, track_tokens_seen = [], [], []
     tokens_seen = 0
@@ -108,12 +141,12 @@ def train_model_simple(model, train_loader, val_loader, optimizer, device, num_e
                     step=global_step,
                 )
                 # Print a sample text after each epoch
-                generate_and_print_sample(model, tokenizer, device, start_context)
+                generate_and_print_sample(model, tokenizer, device, start_context, max_new_tokens=max_new_tokens)
 
     return train_losses, val_losses, track_tokens_seen
 
 
-def evaluate_test_model(model, test_loader, device, tokenizer, start_context="Every effort moves you"):
+def evaluate_test_model(model: GPTModel, test_loader, device, tokenizer, start_context="Every effort moves you", max_new_tokens=100):
     """
     Evaluate the trained model on the test dataset.
 
@@ -141,15 +174,10 @@ def evaluate_test_model(model, test_loader, device, tokenizer, start_context="Ev
     encoded = text_to_token_ids(start_context, tokenizer).to(device)
 
     with torch.no_grad():
-        token_ids = generate_text_simple(model=model, idx=encoded, max_new_tokens=100, context_size=context_size)
+        token_ids = generate_text_simple(model=model, idx=encoded, max_new_tokens=max_new_tokens, context_size=context_size)
         decoded_text = token_ids_to_text(token_ids, tokenizer)
         # Generate sample text
     logger.info(f"\nSample text generation with context: '{start_context}'\ngenerated text: '{decoded_text.replace('\n', ' ')}'")
-
-    # # Calculate perplexity (optional metric)
-    # perplexity = torch.exp(torch.tensor(test_loss)).item()
-    # perplexity_metric = Perplexity()
-    # print(f"Test Perplexity: {perplexity:.4f}")
 
     model.train()  # Reset to training mode
     logger.info(f"Test loss: {test_loss:.4f}")
@@ -175,7 +203,7 @@ def plot_losses(epochs_seen, tokens_seen, train_losses, val_losses):
     # plt.show()
 
 
-def main(gpt_config, settings):
+def main(model_config, training_config, dataset_config):
     torch.manual_seed(123)
     if torch.cuda.is_available():
         device = torch.device("cuda")
@@ -187,37 +215,106 @@ def main(gpt_config, settings):
     logger.info(f"Using device: {device}")
 
     ##############################
-    # Download data if necessary
-    ##############################
-
-    ##############################
     # Initialize model
     ##############################
 
-    model = GPTModel(gpt_config)
+    model = GPTModel(model_config)
     model.to(device)  # no assignment model = model.to(device) necessary for nn.Module classes
-    optimizer = torch.optim.AdamW(model.parameters(), lr=settings["learning_rate"], weight_decay=settings["weight_decay"])
+    ##############################
+    #  Model summary
+    ##############################
+    dummy_input = torch.randint(0, model_config.get("vocab_size"), (1, 256), dtype=torch.long).to(device)
+    model_summary = str(summary(model, input_data=dummy_input))
+    mlflow.log_text(model_summary, "artifacts/model_summary.txt")
+
+    ##############################
+    # Initialize optimizer and tokenizer
+    ##############################
+    optimizer = optimizer_mapper[training_config["optimizer"]](
+        model.parameters(), lr=training_config["learning_rate"], weight_decay=training_config["weight_decay"]
+    )
+    tokenizer = tiktoken.get_encoding("gpt2")
+    max_docs = dataset_config.get("max_docs", None)
+
+    mlflow.log_params(
+        {
+            "device": str(device),
+            "tokenizer": tokenizer.name,
+            "optimizer_details": optimizer.__str__(),
+        }
+    )
 
     ##############################
     # Set up dataloaders
     ##############################
+    # Speaklesh dataset
+    if dataset_config.get("use_speaklesh", False):
+        train_loader = create_plwiki_dataloader(
+            split="train", batch_size=training_config["batch_size"], max_docs=max_docs, stride=model_config["context_length"]
+        )
+        val_loader = create_plwiki_dataloader(
+            split="val", batch_size=training_config["batch_size"], max_docs=max_docs, stride=model_config["context_length"]
+        )
+        test_loader = create_plwiki_dataloader(
+            split="test", batch_size=training_config["batch_size"], max_docs=max_docs, stride=model_config["context_length"]
+        )
 
-    train_loader = create_plwiki_dataloader(
-        split="train", batch_size=settings["batch_size"], max_docs=1000, stride=gpt_config["context_length"]
-    )
-    val_loader = create_plwiki_dataloader(
-        split="val", batch_size=settings["batch_size"], max_docs=1000, stride=gpt_config["context_length"]
-    )
+    else:
+        # The Verdict dataset from tutorial
 
-    test_loader = create_plwiki_dataloader(
-        split="test", batch_size=settings["batch_size"], max_docs=1000, stride=gpt_config["context_length"]
-    )
+        # Train/validation ratio
+        ##############################
+        # Download data if necessary
+        ##############################
+
+        file_path = "the-verdict.txt"
+        url = "https://raw.githubusercontent.com/rasbt/LLMs-from-scratch/main/ch02/01_main-chapter-code/the-verdict.txt"
+
+        if not os.path.exists(file_path):
+            response = requests.get(url, timeout=30)
+            response.raise_for_status()
+            text_data = response.text
+            with open(file_path, "w", encoding="utf-8") as file:
+                file.write(text_data)
+        else:
+            with open(file_path, "r", encoding="utf-8") as file:
+                text_data = file.read()
+            train_ratio = 0.80
+            split_idx_train = int(train_ratio * len(text_data))
+            split_idx_val = int((train_ratio + 0.10) * len(text_data))
+            train_loader = create_dataloader_v1(
+                text_data[:split_idx_train],
+                batch_size=training_config["batch_size"],
+                max_length=model_config["context_length"],
+                stride=model_config["context_length"],
+                drop_last=True,
+                shuffle=True,
+                num_workers=0,
+            )
+
+            val_loader = create_dataloader_v1(
+                text_data[split_idx_train:split_idx_val],
+                batch_size=training_config["batch_size"],
+                max_length=model_config["context_length"],
+                stride=model_config["context_length"],
+                drop_last=False,
+                shuffle=False,
+                num_workers=0,
+            )
+
+            test_loader = create_dataloader_v1(
+                text_data[split_idx_val:],
+                batch_size=training_config["batch_size"],
+                max_length=model_config["context_length"],
+                stride=model_config["context_length"],
+                drop_last=False,
+                shuffle=False,
+                num_workers=0,
+            )
 
     ##############################
     # Train model
     ##############################
-
-    tokenizer = tiktoken.get_encoding("gpt2")
 
     train_losses, val_losses, tokens_seen = train_model_simple(
         model,
@@ -225,61 +322,79 @@ def main(gpt_config, settings):
         val_loader,
         optimizer,
         device,
-        num_epochs=settings["num_epochs"],
-        eval_freq=50,
+        num_epochs=training_config["num_epochs"],
+        eval_freq=5,
         eval_iter=1,
-        start_context="Pierogi ruskie to",
+        start_context=START_CONTEXT,
         tokenizer=tokenizer,
+        max_new_tokens=model_config.get("max_new_tokens"),
     )
 
     return train_losses, val_losses, tokens_seen, model, test_loader
 
 
 if __name__ == "__main__":
-    GPT_CONFIG_124M = {
-        "vocab_size": 50257,  # Vocabulary size
-        "context_length": 256,  # Shortened context length (orig: 1024)
-        "emb_dim": 768,  # Embedding dimension
-        "n_heads": 12,  # Number of attention heads
-        "n_layers": 12,  # Number of layers
-        "drop_rate": 0.1,  # Dropout rate
-        "qkv_bias": False,  # Query-key-value bias
-    }
+    tokenizer = tiktoken.get_encoding("gpt2")
+    TRANSFORMER_MODEL_CONFIG = TransformerModelConfig(
+        **{
+            "vocab_size": tokenizer.n_vocab,  # Vocabulary size
+            "context_length": 256,  # Shortened context length (orig: 1024)
+            "emb_dim": 768,  # Embedding dimension
+            "n_heads": 12,  # Number of attention heads
+            "n_layers": 14,  # Number of layers
+            "drop_rate": 0.35,  # Dropout rate
+            "qkv_bias": False,  # Query-key-value bias
+            "max_new_tokens": 256,
+        }
+    ).model_dump()
 
-    OTHER_SETTINGS = {"learning_rate": 5e-4, "num_epochs": 10, "batch_size": 2, "weight_decay": 0.1}
+    TRAINING_SETTINGS = ModelTrainingConfig(
+        **{
+            "learning_rate": 45e-4,
+            "num_epochs": 5,
+            "batch_size": 4,
+            "weight_decay": 0.5,
+            "optimizer": "adamw",
+        }
+    ).model_dump()
+
+    DATASET_SETTINGS = DataLoaderConfig(**{"max_docs": 200, "use_speaklesh": True}).model_dump()
 
     ###########################
     # Initiate training
     ###########################
+    START_CONTEXT = "Pierogi ruskie to"
     with mlflow.start_run():
-        mlflow.log_params(GPT_CONFIG_124M)
-        mlflow.log_params(OTHER_SETTINGS)
-        train_losses, val_losses, tokens_seen, model, test_loader = main(GPT_CONFIG_124M, OTHER_SETTINGS)
+        mlflow.log_params(TRANSFORMER_MODEL_CONFIG)
+        mlflow.log_params(TRAINING_SETTINGS)
+        mlflow.log_params(DATASET_SETTINGS)
+        train_losses, val_losses, tokens_seen, model, test_loader = main(TRANSFORMER_MODEL_CONFIG, TRAINING_SETTINGS, DATASET_SETTINGS)
 
         ###########################
         # After training
         ###########################
 
         # Plot results
-        epochs_tensor = torch.linspace(0, OTHER_SETTINGS["num_epochs"], len(train_losses))
+        epochs_tensor = torch.linspace(0, TRAINING_SETTINGS["num_epochs"], len(train_losses))
         plot_losses(epochs_tensor, tokens_seen, train_losses, val_losses)
         plt.savefig("loss.pdf")
 
         # Evaluate model on test data
-        tokenizer = tiktoken.get_encoding("gpt2")
+
         test_results = evaluate_test_model(
             model,
             test_loader,
             device=torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"),
             tokenizer=tokenizer,
-            start_context="Every effort moves you",
+            start_context=START_CONTEXT,
+            max_new_tokens=TRANSFORMER_MODEL_CONFIG.get("max_new_tokens"),
         )
         mlflow.log_metrics({"test_loss": test_results["test_loss"]})
 
         # Save and load model
-        torch.save(model.state_dict(), "model.pth")
-        model = GPTModel(GPT_CONFIG_124M)
-        model.load_state_dict(torch.load("model.pth", weights_only=True))
+        torch.save(model.state_dict(), f"models/model_id_{mlflow.active_run().info.run_id}.pth")
+        model = GPTModel(TRANSFORMER_MODEL_CONFIG)
+        model.load_state_dict(torch.load(f"models/model_id_{mlflow.active_run().info.run_id}.pth", weights_only=True))
 
-        print("\nFinal Test Results:")
-        print(f"Test Loss: {test_results['test_loss']:.4f}")
+        logger.info("\nFinal Test Results:")
+        logger.info(f"Test Loss: {test_results['test_loss']:.4f}")
