@@ -29,16 +29,19 @@ class ModelTrainingConfig(BaseModel):
     batch_size: int
     weight_decay: float
     optimizer: Literal["adamw", "sgd"] = "adamw"
+    eval_freq: int = 20
+    eval_iter: int = 5
 
 
 class DataLoaderConfig(BaseModel):
     max_docs: int = 100
     use_speaklesh: bool = True
+    speaklesh_dataset_name: str = "wolne_lektury_corpus"
 
 
 if __name__ == "__main__":
     import tiktoken
 
-    tokenizer = tiktoken.get_encoding("gpt2")
+    tokenizer = tiktoken.get_encoding("o200k_base")
     print(tokenizer)
     print("Vocab size:", tokenizer.n_vocab)

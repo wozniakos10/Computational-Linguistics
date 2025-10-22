@@ -17,7 +17,7 @@ def token_ids_to_text(token_ids, tokenizer):
 
 if __name__ == "__main__":
     print("test")
-    tokenizer = tiktoken.get_encoding("gpt2")
+    tokenizer = tiktoken.get_encoding("o200k_base")
     TRANSFORMER_MODEL_CONFIG = TransformerModelConfig(
         **{
             "vocab_size": tokenizer.n_vocab,  # Vocabulary size

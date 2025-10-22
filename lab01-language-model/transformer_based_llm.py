@@ -185,7 +185,7 @@ def temperature_scaled_softmax(logits, temperature=1.0):
     return F.softmax(logits, dim=-1)
 
 
-def generate_text_simple(model, idx, max_new_tokens, context_size, temperature=1.0, use_sampling=True):
+def generate_text_simple(model, idx, max_new_tokens, context_size, temperature=1.0, use_sampling=False):
     # idx is (B, T) array of indices in the current context
     for _ in range(max_new_tokens):
         # Crop current context if it exceeds the supported context size
@@ -249,7 +249,7 @@ def main():
 
     start_context = "Hello, I am"
 
-    tokenizer = tiktoken.get_encoding("gpt2")
+    tokenizer = tiktoken.get_encoding("o200k_base")
     encoded = tokenizer.encode(start_context)
     encoded_tensor = torch.tensor(encoded).unsqueeze(0)
 
