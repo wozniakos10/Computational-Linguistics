@@ -1,60 +1,25 @@
-from transformer_based_llm import GPTModel, generate_text_simple
+from transformer_based_llm import generate_text_simple
 import torch
-from models import TransformerModelConfig, ModelTrainingConfig, DataLoaderConfig
 from transformers import AutoTokenizer
-from utils import text_to_token_ids, token_ids_to_text
+from utils import text_to_token_ids, token_ids_to_text, get_model_config, get_model
+import time
+import json
 
 
-if __name__ == "__main__":
-    print("test")
-    # tokenizer = tiktoken.get_encoding("o200k_base")
-    tokenizer = AutoTokenizer.from_pretrained("flax-community/papuGaPT2")
+def test_transformer_inference_time():
+    tokenizer = AutoTokenizer.from_pretrained("speakleash/Bielik-4.5B-v3")
     vocab_size = tokenizer.n_vocab if hasattr(tokenizer, "n_vocab") else tokenizer.vocab_size
-    TRANSFORMER_MODEL_CONFIG = TransformerModelConfig(
-        **{
-            "vocab_size": vocab_size,  # Vocabulary size
-            "context_length": 256,  # Shortened context length (orig: 1024)
-            "emb_dim": 768,  # Embedding dimension
-            "n_heads": 12,  # Number of attention heads
-            "n_layers": 12,  # Number of layers
-            "drop_rate": 0.35,  # Dropout rate
-            "qkv_bias": False,  # Query-key-value bias
-            "max_new_tokens": 256,
-        }
-    ).model_dump()
-
-    TRAINING_SETTINGS = ModelTrainingConfig(
-        **{
-            "learning_rate": 45e-4,
-            "num_epochs": 5,
-            "batch_size": 4,
-            "weight_decay": 0.5,
-            "optimizer": "adamw",
-        }
-    ).model_dump()
-
-    DATASET_SETTINGS = DataLoaderConfig(**{"max_docs": 100, "use_speaklesh": True}).model_dump()
-
+    TRANSFORMER_MODEL_CONFIG = get_model_config("transformer", vocab_size=vocab_size)
+    model = get_model("transformer", TRANSFORMER_MODEL_CONFIG)
     device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
-    print(f"Using device: {device}")
-    model = GPTModel(TRANSFORMER_MODEL_CONFIG).to(device)
-    model.load_state_dict(torch.load("models/model_id_28b6bf7cd81741439a62aa38b901fb72.pth", weights_only=True))
 
-    prompt = "Mój ulubiony sport to piłka nożna, bardzo lubię oglądać mecze na żywo i kibicować"
+    print("Using device:", device)
+    # mapping to load model saved with CUDA on CPU or MPS
+    model.load_state_dict(torch.load("models/transformer/best_model_checkpoint.pth", map_location=torch.device(device), weights_only=True))
+    model.to(device).eval()
+    prompt = "Mój"
     encoded = text_to_token_ids(prompt, tokenizer).to(device)
-    # generated_ids = generate_text_simple(
-    #     model,
-    #     encoded,
-    #     TRANSFORMER_MODEL_CONFIG["max_new_tokens"],
-    #     TRANSFORMER_MODEL_CONFIG["context_length"],
-    #     use_sampling=True,
-    #     temperature=1,
-    # )
-    # decoded_text = token_ids_to_text(generated_ids, tokenizer)
-    # print("Początek:", prompt)
-    # print("Wygenerowany tekst with sampling:", decoded_text)
-    # print("", end="\n\n")
-
+    start = time.time()
     generated_ids = generate_text_simple(
         model,
         encoded,
@@ -63,6 +28,67 @@ if __name__ == "__main__":
         use_sampling=True,
         temperature=3,
     )
-    decoded_text = token_ids_to_text(generated_ids, tokenizer)
-    print("Początek:", prompt)
-    print("Wygenerowany tekst without sampling:", decoded_text)
+    end = time.time()
+    print(encoded.shape)
+    print(generated_ids.shape)
+    generated_tokens = generated_ids.shape[1] - encoded.shape[1]
+    print(f"Generated {generated_tokens} tokens in {end - start} seconds (1 prompt length: {encoded.shape[1]})")
+    print(f"Tokens per second: {generated_tokens / (end - start)} (1 prompt length: {encoded.shape[1]})")
+
+
+def test_transformer_inference_quality():
+    tokenizer = AutoTokenizer.from_pretrained("speakleash/Bielik-4.5B-v3")
+    vocab_size = tokenizer.n_vocab if hasattr(tokenizer, "n_vocab") else tokenizer.vocab_size
+    TRANSFORMER_MODEL_CONFIG = get_model_config("transformer", vocab_size=vocab_size)
+    model = get_model("transformer", TRANSFORMER_MODEL_CONFIG)
+    device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
+
+    print("Using device:", device)
+    # mapping to load model saved with CUDA on CPU or MPS
+    model.load_state_dict(torch.load("models/transformer/best_model_checkpoint.pth", map_location=torch.device(device), weights_only=True))
+    model.to(device).eval()
+    prompt = "Mój"
+    encoded = text_to_token_ids(prompt, tokenizer).to(device)
+    generated_ids = generate_text_simple(
+        model,
+        encoded,
+        TRANSFORMER_MODEL_CONFIG["max_new_tokens"],
+        TRANSFORMER_MODEL_CONFIG["context_length"],
+        use_sampling=True,
+        temperature=3,
+    )
+    prompts = [
+        "",
+        "Polska to piękny kraj.",
+        "W Polsce znajduje się wiele zabytków.",
+        "Wawel to zamek królewski w Krakowie.",
+    ]
+    data = {}
+    temperatures = [0.7, 1.0, 1.3]
+    for temp in temperatures:
+        data[temp] = {}
+        data[temp]["prompts"] = []
+        data[temp]["generations"] = []
+        for p in prompts:
+            print(f"Generating for temperature {temp}, prompt: '{p}'")
+            data[temp]["prompts"].append(p)
+            encoded = text_to_token_ids(p, tokenizer).to(device)
+            generated_ids = generate_text_simple(
+                model,
+                encoded,
+                TRANSFORMER_MODEL_CONFIG["max_new_tokens"],
+                TRANSFORMER_MODEL_CONFIG["context_length"],
+                use_sampling=True,
+                temperature=temp,
+            )
+            decoded_text = token_ids_to_text(generated_ids, tokenizer)
+            data[temp]["generations"].append(decoded_text)
+            print("\n\n")
+
+    with open("transformer_inference_results.json", "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+if __name__ == "__main__":
+    # test_transformer_inference_time()
+    test_transformer_inference_quality()
