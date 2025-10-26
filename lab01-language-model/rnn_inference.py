@@ -59,7 +59,7 @@ def test_rnn_inference_quality():
         "Wawel to zamek królewski w Krakowie.",
     ]
     data = {}
-    temperatures = [0.7, 1.0, 1.3]
+    temperatures = [0.5, 1.0, 1.5]
     for temp in temperatures:
         data[temp] = {}
         data[temp]["prompts"] = []

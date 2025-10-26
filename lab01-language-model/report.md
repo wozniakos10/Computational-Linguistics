@@ -51,7 +51,7 @@ Below are truncated examples to demonstrate the model's capability to generate t
 
 | Temperature | Prompt | Truncated Generation |
 | :--- | :--- | :--- |
-| **0.5** | `"Polska to piękny kraj."` | `<s> Polska to piękny kraj. \nW Polsce, założona w 1988 roku, po raz pierwszy w 1992 roku.\nPo raz pierwszy w 1993 roku...` |
+| **0.5** | `"Polska to piękny kraj."` | `<s> Polska to piękny kraj. \nW Polsce, założona w 1Example 88 roku, po raz pierwszy w 1992 roku.\nPo raz pierwszy w 1993 roku...` |
 | **1.0** | `"Polska to piękny kraj."` | `<s> Polska to piękny kraj.\nCzotor.\nDwierciadły to były dwa małe klasy, służące na lewo do 2011 roku. Niektórzy jego...` |
 | **1.5** | `"Polska to piękny kraj."` | `<s> Polska to piękny kraj.PA zabytka bydłarusowego modeli lotniczySwojewództwowenska Habsbursyjnej nr 168 jest rezygna...` |
 
@@ -67,27 +67,41 @@ The RNN model was created based on LSTM. The embedding dimension was 512, and th
 
 The RNN saw more tokens during training and better utilized the GPU but obtained much worse results. I expected that the transformer would process more tokens during training. Perhaps there was some misconfiguration with the transformer training setup, but I'm not sure about those results.
 
+Here is a GPU utilization comparison
+
+<img src="outputs/gpu_utilization.png" alt="Learning curves" width="1600" height="800"/>
+
 
 ## Results
 
 The following results were obtained after 120 minutes of training:
 
-RESULTS
+| Metric           | Value          |
+|------------------|---------------|
+| test_loss        | 7.8582        |
+| test_perplexity  | 2586.9280     |
+| tokens_seen      | 117,150,464   |
+| train_loss       | 8.0915        |
+| train_perplexity | 3,266.59      |
+| val_loss         | 7.8367        |
+| val_perplexity   | 2,531.75      |
+
 
 
 Here are the learning curve plots:
 
+<img src="outputs/rnn/learning_curves.png" alt="Learning curves" width="1600" height="800"/>
 
-CURVE PLOTS
-
-
-Here are example model inferences with different temperatures.
 
 
 Below are truncated examples to demonstrate the model's capability to generate text.
 
 
-EXAMPLES
+| Temperature | Prompt | Truncated Generation |
+| :--- | :--- | :--- |
+| **0.5** | `"Polska to piękny kraj."` | `<s> Polska to piękny kraj. w w w Polsce w w w, w w w w w, w w w w gminie w w w w w w,W<br><br>1..<br>.5,1191 w819..9 w1 w należą<br> należała w<br>91 do administra...` |
+| **1.0** | `"Polska to piękny kraj."` | `<s> Polska to piękny kraj.  wieś wieś w w \" położona,,ch nackim mało mazowieckim, mecenackim gminie gminieuchy zachodniopomor3skaHibli drewnianyroz kościoła.cyjnie<br>mo4<br>la  szlachec1żu Czer1 wHi łaci,1bska województwie9 Maryizmie ziemi kościoła1 droga...` |
+| **1.5** | `"Polska to piękny kraj."` | `<s> Polska to piękny kraj. niebieski2au mo położonalt województwie całychgel taru soł soł2 Dąsznoniczy kilometrówzd Dzwow Mckerona rozstapiona rę trasie w zależnościtki integra członek parafiiłowoą częściącznym sierż ...` |
 
 
 *Note: Full generation results for all prompts and temperatures are available in [outputs/rnn/rnn_inference_results.json](outputs/rnn/rnn_inference_results.json)*
@@ -95,4 +109,4 @@ EXAMPLES
 
 RNN generation speed on M4: 4 tokens per second
 
-RNN generation on A40: 16.5 tokens per second
+RNN generation on A40: 23 tokens per second
