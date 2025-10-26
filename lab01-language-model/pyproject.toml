@@ -23,3 +23,8 @@ dependencies = [
 
 [tool.ruff]
 line-length = 140
+
+[dependency-groups]
+dev = [
+    "wandb>=0.22.2",
+]

@@ -5,12 +5,12 @@ import os
 from typing import Literal
 
 import matplotlib.pyplot as plt
-import mlflow
 import requests
 import torch
 from dotenv import load_dotenv
 from torchinfo import summary
 
+import wandb
 from dataset import create_dataloader_v1, create_speakleash_dataloader
 from logger import get_configured_logger
 from models import DataLoaderConfig, ModelTrainingConfig
@@ -29,16 +29,9 @@ from utils import (
 
 load_dotenv()
 
-# Import from local files
-
-
-########################
 # MODEL MONITORING
-############
 logger = get_configured_logger("llm_train", log_file="logs/llm_train.log")
-remote_server_uri = "http://127.0.0.1:8080"
-mlflow.set_tracking_uri(remote_server_uri)
-mlflow.set_experiment("/language-model-transformer")
+# wandb will be initialized in __main__
 ########################
 # MODEL MONITORING
 ############
@@ -66,6 +59,7 @@ def train_model_simple(
     eval_iter,
     start_context,
     tokenizer,
+    run,  # Pass run object for wandb logging
     max_new_tokens=50,
 ):
     # Initialize lists to track losses and tokens seen
@@ -94,7 +88,7 @@ def train_model_simple(
                 logger.info(
                     f"Epoch: {epoch + 1} (Step {global_step:06d}): Train loss {train_loss:.3f}, Val loss {val_loss:.3f}, Train perplexity {train_perplexity:.3f}, Val perplexity {val_perplexity:.3f}"
                 )
-                mlflow.log_metrics(
+                run.log(
                     {
                         "train_loss": train_loss,
                         "val_loss": val_loss,
@@ -102,6 +96,7 @@ def train_model_simple(
                         "val_perplexity": val_perplexity,
                         "tokens_seen": tokens_seen,
                         "epoch": epoch + 1,
+                        "global_step": global_step,
                     },
                     step=global_step,
                 )
@@ -132,6 +127,7 @@ def evaluate_test_model(model: GPTModel, test_loader, device, tokenizer, start_c
     model.eval()
     with torch.no_grad():
         test_loss = calc_loss_loader(test_loader, model, device)
+        test_perplexity = torch.exp(torch.tensor(test_loss))
 
     logger.info(f"Test Loss: {test_loss:.4f}")
 
@@ -148,7 +144,7 @@ def evaluate_test_model(model: GPTModel, test_loader, device, tokenizer, start_c
 
     model.train()  # Reset to training mode
     logger.info(f"Test loss: {test_loss:.4f}")
-    return {"test_loss": test_loss, "sample_text": decoded_text}
+    return {"test_loss": test_loss, "sample_text": decoded_text, "test_perplexity": test_perplexity}
 
 
 def plot_losses(epochs_seen, tokens_seen, train_losses, val_losses):
@@ -170,7 +166,14 @@ def plot_losses(epochs_seen, tokens_seen, train_losses, val_losses):
     # plt.show()
 
 
-def main(model_config, training_config, dataset_config, tokenizer, model_type: Literal["rnn", "transformer"] = "transformer"):
+def main(
+    model_config,
+    training_config,
+    dataset_config,
+    tokenizer,
+    run,
+    model_type: Literal["rnn", "transformer"] = "transformer",
+):
     torch.manual_seed(123)
     if torch.cuda.is_available():
         device = torch.device("cuda")
@@ -192,7 +195,7 @@ def main(model_config, training_config, dataset_config, tokenizer, model_type: L
     ##############################
     dummy_input = torch.randint(0, model_config.get("vocab_size"), (1, 256), dtype=torch.long).to(device)
     model_summary = str(summary(model, input_data=dummy_input))
-    mlflow.log_text(model_summary, "artifacts/model_summary.txt")
+    run.log({"model_summary": wandb.Html(f"<pre>{model_summary}</pre>")})
 
     ##############################
     # Initialize optimizer and tokenizer
@@ -202,11 +205,15 @@ def main(model_config, training_config, dataset_config, tokenizer, model_type: L
     )
     max_docs = dataset_config.get("max_docs", None)
     tokenizer_name = tokenizer.name if hasattr(tokenizer, "name") else tokenizer.__class__.__name__
-    mlflow.log_params(
+    run.config.update(
         {
             "device": str(device),
-            "tokenizer": tokenizer_name,
-            "optimizer_details": optimizer.__str__(),
+            "tokenizer_name": tokenizer_name,
+            "optimizer_details": str(optimizer),
+            **model_config,
+            **training_config,
+            **dataset_config,
+            "model_type": model_type,
         }
     )
 
@@ -317,6 +324,7 @@ def main(model_config, training_config, dataset_config, tokenizer, model_type: L
         eval_iter=training_config["eval_iter"],
         start_context=START_CONTEXT,
         tokenizer=tokenizer,
+        run=run,  # Pass run object for wandb logging
         max_new_tokens=model_config.get("max_new_tokens"),
     )
 
@@ -359,6 +367,15 @@ if __name__ == "__main__":
 
     args = argparse.parse_args()
 
+    run = wandb.init(
+        entity=os.getenv("WANDB_ENTITY"),
+        project=os.getenv("WANDB_PROJECT"),
+        config={
+            "tokenizer_script_arg_name": args.tokenizer,
+            "use_tiktoken": args.use_tiktoken,
+        },
+        settings=wandb.Settings(),
+    )
     ################################
     ########### TOKENIZER ###########
     ################################
@@ -377,7 +394,7 @@ if __name__ == "__main__":
     TRAINING_SETTINGS = ModelTrainingConfig(
         **{
             "learning_rate": 45e-4,
-            "num_epochs": 5,
+            "num_epochs": 1,
             "batch_size": 4,
             "weight_decay": 0.5,
             "optimizer": "adamw",
@@ -398,41 +415,36 @@ if __name__ == "__main__":
     # Initiate training
     ###########################
     START_CONTEXT = "Pierogi ruskie to to jedno z tradycyjnych dań kuchni polskiej"
-    with mlflow.start_run():
-        logger.info(f"Started training for model type: {args.model_type} with tokenizer: {args.tokenizer}")
-        mlflow.log_params(MODEL_CONFIG)
-        mlflow.log_params(TRAINING_SETTINGS)
-        mlflow.log_params(DATASET_SETTINGS)
-        mlflow.log_params(
-            {
-                "model_type": args.model_type,
-            }
-        )
+    logger.info(f"wandb run id: {run.id}")
+    logger.info(f"Started training for model type: {args.model_type} with tokenizer: {args.tokenizer}")
+    # wandb.config is already updated in main()
 
-        train_losses, val_losses, tokens_seen, model, test_loader = main(
-            MODEL_CONFIG, TRAINING_SETTINGS, DATASET_SETTINGS, tokenizer=tokenizer, model_type=args.model_type
-        )
+    train_losses, val_losses, tokens_seen, model, test_loader = main(
+        MODEL_CONFIG, TRAINING_SETTINGS, DATASET_SETTINGS, tokenizer=tokenizer, run=run, model_type=args.model_type
+    )
 
-        ###########################
-        # After training
-        ###########################
+    ###########################
+    # After training
+    ###########################
 
-        # Evaluate model on test data
+    # Evaluate model on test data
+    test_results = evaluate_test_model(
+        model,
+        test_loader,
+        device=torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"),
+        tokenizer=tokenizer,
+        start_context=START_CONTEXT,
+        max_new_tokens=MODEL_CONFIG.get("max_new_tokens"),
+    )
+    run.log({"test_loss": test_results["test_loss"], "test_perplexity": test_results["test_perplexity"]})
 
-        test_results = evaluate_test_model(
-            model,
-            test_loader,
-            device=torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"),
-            tokenizer=tokenizer,
-            start_context=START_CONTEXT,
-            max_new_tokens=MODEL_CONFIG.get("max_new_tokens"),
-        )
-        mlflow.log_metrics({"test_loss": test_results["test_loss"]})
+    # Save and load model
+    model_path = f"models/model_id_{run.id}.pth"
+    torch.save(model.state_dict(), model_path)
+    wandb.save(model_path)
+    model = get_model(args.model_type, MODEL_CONFIG)
+    model.load_state_dict(torch.load(model_path, weights_only=True))
 
-        # Save and load model
-        torch.save(model.state_dict(), f"models/model_id_{mlflow.active_run().info.run_id}.pth")
-        model = get_model(args.model_type, MODEL_CONFIG)
-        model.load_state_dict(torch.load(f"models/model_id_{mlflow.active_run().info.run_id}.pth", weights_only=True))
-
-        logger.info("\nFinal Test Results:")
-        logger.info(f"Test Loss: {test_results['test_loss']:.4f}")
+    logger.info("\nFinal Test Results:")
+    logger.info(f"Test Loss: {test_results['test_loss']:.4f}")
+    run.finish()

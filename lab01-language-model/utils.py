@@ -1,6 +1,5 @@
 from typing import Literal
 
-import mlflow
 import tiktoken
 import torch
 import torch.nn.functional as F
@@ -33,9 +32,9 @@ def get_model_config(model_type: Literal["rnn", "transformer"], vocab_size: int 
     if model_type == "rnn":
         return RnnModelConfig(
             vocab_size=vocab_size,
-            emb_dim=128,
-            rnn_hidden_dim=256,
-            num_layers=3,
+            emb_dim=512,
+            rnn_hidden_dim=1024,
+            num_layers=10,
             drop_rate=0.3,
             context_length=256,
             max_new_tokens=256,
@@ -124,7 +123,6 @@ def generate_and_print_sample(model: GPTModel, tokenizer, device, start_context,
         )
         decoded_text = token_ids_to_text(token_ids, tokenizer)
         logger.info(f"Sample text generation with context: '{start_context}'\ngenerated text: '{decoded_text.replace('\n', ' ')}'")
-        mlflow.log_text(decoded_text, "artifacts/generated_text.txt")
     model.train()
 
 
