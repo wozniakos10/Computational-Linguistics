@@ -31,6 +31,7 @@ class ModelTrainingConfig(BaseModel):
     optimizer: Literal["adamw", "sgd"] = "adamw"
     eval_freq: int = 20
     eval_iter: int = 5
+    max_training_minutes: int = 60
 
 
 class DataLoaderConfig(BaseModel):

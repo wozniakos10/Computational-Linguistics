@@ -3,7 +3,7 @@
 import argparse
 import os
 from typing import Literal
-
+import time
 import matplotlib.pyplot as plt
 import requests
 import torch
@@ -61,12 +61,14 @@ def train_model_simple(
     tokenizer,
     run,  # Pass run object for wandb logging
     max_new_tokens=50,
+    max_training_minutes=60,
 ):
     # Initialize lists to track losses and tokens seen
     train_losses, val_losses, track_tokens_seen = [], [], []
     tokens_seen = 0
     global_step = -1
-
+    best_val_loss = float("inf")
+    training_start = time.time()
     # Main training loop
     for epoch in range(num_epochs):
         model.train()  # Set model to training mode
@@ -81,6 +83,12 @@ def train_model_simple(
 
             # Optional evaluation step
             if global_step % eval_freq == 0:
+                # Condition to stop training after max_training_minutes
+                current_time = time.time()
+                if (current_time - training_start) / 60 > max_training_minutes:
+                    logger.info(f"Maximum training time of {max_training_minutes} minutes reached. Stopping training.")
+                    return train_losses, val_losses, track_tokens_seen
+
                 train_loss, val_loss, train_perplexity, val_perplexity = evaluate_model(model, train_loader, val_loader, device, eval_iter)
                 train_losses.append(train_loss)
                 val_losses.append(val_loss)
@@ -102,6 +110,15 @@ def train_model_simple(
                 )
                 # Print a sample text after each epoch
                 generate_and_print_sample(model, tokenizer, device, start_context, max_new_tokens=max_new_tokens)
+
+                if val_loss < best_val_loss:
+                    best_val_loss = val_loss
+                    # Save the best model
+                    best_model_path = f"models/{run.id}/best_model_checkpoint.pth"
+                    cur_start = time.time()
+                    torch.save(model.state_dict(), best_model_path)
+                    cur_end = time.time()
+                    logger.info(f"Saved best model at step {global_step} to {best_model_path} (took {cur_end - cur_start:.2f} seconds)")
 
     return train_losses, val_losses, track_tokens_seen
 
@@ -130,6 +147,7 @@ def evaluate_test_model(model: GPTModel, test_loader, device, tokenizer, start_c
         test_perplexity = torch.exp(torch.tensor(test_loss))
 
     logger.info(f"Test Loss: {test_loss:.4f}")
+    logger.info(f"Test Perplexity: {test_perplexity:.4f}")
 
     context_size = model.pos_emb.weight.shape[0]
     encoded = text_to_token_ids(start_context, tokenizer).to(device)
@@ -142,8 +160,6 @@ def evaluate_test_model(model: GPTModel, test_loader, device, tokenizer, start_c
         # Generate sample text
     logger.info(f"\nSample text generation with context: '{start_context}'\ngenerated text: '{decoded_text.replace('\n', ' ')}'")
 
-    model.train()  # Reset to training mode
-    logger.info(f"Test loss: {test_loss:.4f}")
     return {"test_loss": test_loss, "sample_text": decoded_text, "test_perplexity": test_perplexity}
 
 
@@ -326,6 +342,7 @@ def main(
         tokenizer=tokenizer,
         run=run,  # Pass run object for wandb logging
         max_new_tokens=model_config.get("max_new_tokens"),
+        max_training_minutes=training_config["max_training_minutes"],
     )
 
     return train_losses, val_losses, tokens_seen, model, test_loader
@@ -364,6 +381,7 @@ if __name__ == "__main__":
     )
     argparse.add_argument("--dataset_name", type=str, default="wolne_lektury_corpus", help="Name of the Speakleash dataset to use")
     argparse.add_argument("--max_docs", type=int, default=200, help="Maximum number of documents to use from the dataset")
+    argparse.add_argument("--max_training_minutes", type=int, default=60, help="Maximum training time in minutes")
 
     args = argparse.parse_args()
 
@@ -376,6 +394,9 @@ if __name__ == "__main__":
         },
         settings=wandb.Settings(),
     )
+
+    # create dir for saving model
+    os.makedirs(f"models/{run.id}", exist_ok=True)
     ################################
     ########### TOKENIZER ###########
     ################################
@@ -393,13 +414,14 @@ if __name__ == "__main__":
 
     TRAINING_SETTINGS = ModelTrainingConfig(
         **{
-            "learning_rate": 45e-4,
-            "num_epochs": 1,
+            "learning_rate": 5e-4,
+            "num_epochs": 10,
             "batch_size": 4,
-            "weight_decay": 0.5,
+            "weight_decay": 0.1,
             "optimizer": "adamw",
-            "eval_freq": 20,
-            "eval_iter": 5,
+            "eval_freq": 5,
+            "eval_iter": 1,
+            "max_training_minutes": args.max_training_minutes,
         }
     ).model_dump()
 
@@ -439,12 +461,9 @@ if __name__ == "__main__":
     run.log({"test_loss": test_results["test_loss"], "test_perplexity": test_results["test_perplexity"]})
 
     # Save and load model
-    model_path = f"models/model_id_{run.id}.pth"
+    model_path = f"models/{run.id}/final_model.pth"
     torch.save(model.state_dict(), model_path)
-    wandb.save(model_path)
     model = get_model(args.model_type, MODEL_CONFIG)
     model.load_state_dict(torch.load(model_path, weights_only=True))
-
-    logger.info("\nFinal Test Results:")
-    logger.info(f"Test Loss: {test_results['test_loss']:.4f}")
+    logger.info("Model correctly saved and loaded back.")
     run.finish()
