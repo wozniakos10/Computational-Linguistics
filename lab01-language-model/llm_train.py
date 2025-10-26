@@ -123,7 +123,9 @@ def train_model_simple(
     return train_losses, val_losses, track_tokens_seen
 
 
-def evaluate_test_model(model: GPTModel, test_loader, device, tokenizer, start_context="Every effort moves you", max_new_tokens=100, context_size=256):
+def evaluate_test_model(
+    model: GPTModel, test_loader, device, tokenizer, start_context="Every effort moves you", max_new_tokens=100, context_size=256
+):
     """
     Evaluate the trained model on the test dataset.
 
@@ -148,7 +150,6 @@ def evaluate_test_model(model: GPTModel, test_loader, device, tokenizer, start_c
 
     logger.info(f"Test Loss: {test_loss:.4f}")
     logger.info(f"Test Perplexity: {test_perplexity:.4f}")
-
 
     encoded = text_to_token_ids(start_context, tokenizer).to(device)
 

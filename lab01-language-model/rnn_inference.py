@@ -15,14 +15,11 @@ def test_rnn_inference_time():
     device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 
     print("Using device:", device)
-    model.load_state_dict(
-        torch.load("models/rnn/best_model_checkpoint.pth", map_location=torch.device(device), weights_only=True)
-    )
+    model.load_state_dict(torch.load("models/rnn/best_model_checkpoint.pth", map_location=torch.device(device), weights_only=True))
     model.to(device).eval()
     prompt = "Mój"
     encoded = text_to_token_ids(prompt, tokenizer).to(device)
     start = time.time()
-
 
     generated_ids = generate_text_simple(
         model,
@@ -48,9 +45,7 @@ def test_rnn_inference_quality():
     device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 
     print("Using device:", device)
-    model.load_state_dict(
-        torch.load("models/rnn/best_model_checkpoint.pth", map_location=torch.device(device), weights_only=True)
-    )
+    model.load_state_dict(torch.load("models/rnn/best_model_checkpoint.pth", map_location=torch.device(device), weights_only=True))
     model.to(device).eval()
     prompts = [
         "",
