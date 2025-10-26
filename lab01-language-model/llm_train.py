@@ -123,7 +123,7 @@ def train_model_simple(
     return train_losses, val_losses, track_tokens_seen
 
 
-def evaluate_test_model(model: GPTModel, test_loader, device, tokenizer, start_context="Every effort moves you", max_new_tokens=100):
+def evaluate_test_model(model: GPTModel, test_loader, device, tokenizer, start_context="Every effort moves you", max_new_tokens=100, context_size=256):
     """
     Evaluate the trained model on the test dataset.
 
@@ -149,7 +149,7 @@ def evaluate_test_model(model: GPTModel, test_loader, device, tokenizer, start_c
     logger.info(f"Test Loss: {test_loss:.4f}")
     logger.info(f"Test Perplexity: {test_perplexity:.4f}")
 
-    context_size = model.pos_emb.weight.shape[0]
+
     encoded = text_to_token_ids(start_context, tokenizer).to(device)
 
     with torch.no_grad():
@@ -415,12 +415,12 @@ if __name__ == "__main__":
     TRAINING_SETTINGS = ModelTrainingConfig(
         **{
             "learning_rate": 5e-4,
-            "num_epochs": 10,
-            "batch_size": 4,
+            "num_epochs": 1000,
+            "batch_size": 64,
             "weight_decay": 0.1,
             "optimizer": "adamw",
-            "eval_freq": 5,
-            "eval_iter": 1,
+            "eval_freq": 50,
+            "eval_iter": 10,
             "max_training_minutes": args.max_training_minutes,
         }
     ).model_dump()
@@ -457,6 +457,7 @@ if __name__ == "__main__":
         tokenizer=tokenizer,
         start_context=START_CONTEXT,
         max_new_tokens=MODEL_CONFIG.get("max_new_tokens"),
+        context_length=MODEL_CONFIG.get("context_length"),
     )
     run.log({"test_loss": test_results["test_loss"], "test_perplexity": test_results["test_perplexity"]})
 
