@@ -60,7 +60,7 @@ class SpeakleashDataLoader(Dataset):
         skipped_docs = 0
         current_doc_index = 0
         docs_list = []
-
+        low_quality_count = 0
         for doc in self.dataset_data:
             # Check if we've reached our max_docs limit
             if len(docs_list) >= self.max_docs:
@@ -70,6 +70,8 @@ class SpeakleashDataLoader(Dataset):
             if self.only_high_quality:
                 if quality == "HIGH":
                     docs_list.append(text)
+                else:
+                    low_quality_count += 1
             else:
                 docs_list.append(text)
 
@@ -108,7 +110,10 @@ class SpeakleashDataLoader(Dataset):
             finally:
                 current_doc_index += 1
 
-        print(f"Successfully processed {processed_docs} documents for '{split}' split, skipped {skipped_docs} corrupted documents")
+        print(
+            f"Successfully processed {processed_docs} documents for '{split}'"
+            f"split, skipped {skipped_docs} corrupted documents\nskipped {low_quality_count} low-quality documents"
+        )
         print(f"Generated {len(self.input_ids)} sequences")
 
     def __len__(self):
@@ -155,7 +160,7 @@ def create_speakleash_dataloader(
     replicate_to = os.path.join(base_dir, "datasets")
     speakleash = Speakleash(replicate_to)
     speaklesh_dataset = speakleash.get(speakleash_dataset_name)
-
+    print(f"Loaded Speakleash dataset '{speakleash_dataset_name}' with {speaklesh_dataset.manifest['stats']['documents']} documents")
     dataset = SpeakleashDataLoader(
         speaklesh_dataset,
         tokenizer,

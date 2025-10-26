@@ -1,25 +1,41 @@
 # Playing with and adjusting for my use-case: https://github.com/rasbt/LLMs-from-scratch
 
+import argparse
 import os
+from typing import Literal
 
 import matplotlib.pyplot as plt
 import mlflow
 import requests
 import torch
+from dotenv import load_dotenv
 from torchinfo import summary
-from transformers import AutoTokenizer
 
 from dataset import create_dataloader_v1, create_speakleash_dataloader
 from logger import get_configured_logger
-from models import DataLoaderConfig, ModelTrainingConfig, TransformerModelConfig
+from models import DataLoaderConfig, ModelTrainingConfig
+from transformer_based_llm import GPTModel, generate_text_simple
+from utils import (
+    calc_loss_batch,
+    calc_loss_loader,
+    evaluate_model,
+    generate_and_print_sample,
+    get_model,
+    get_model_config,
+    get_tokenizer,
+    text_to_token_ids,
+    token_ids_to_text,
+)
+
+load_dotenv()
 
 # Import from local files
-from transformer_based_llm import GPTModel, generate_text_simple
+
 
 ########################
 # MODEL MONITORING
 ############
-logger = get_configured_logger("gpt_train", log_file="logs/gpt_train.log")
+logger = get_configured_logger("llm_train", log_file="logs/llm_train.log")
 remote_server_uri = "http://127.0.0.1:8080"
 mlflow.set_tracking_uri(remote_server_uri)
 mlflow.set_experiment("/language-model-transformer")
@@ -37,66 +53,6 @@ optimizer_mapper = {
 ########################
 # GLOBAL VARIABLES
 ############
-
-
-def text_to_token_ids(text, tokenizer):
-    encoded = tokenizer.encode(text)
-    encoded_tensor = torch.tensor(encoded).unsqueeze(0)  # add batch dimension
-    return encoded_tensor
-
-
-def token_ids_to_text(token_ids, tokenizer):
-    flat = token_ids.squeeze(0)  # remove batch dimension
-    return tokenizer.decode(flat.tolist())
-
-
-def calc_loss_batch(input_batch, target_batch, model, device):
-    input_batch, target_batch = input_batch.to(device), target_batch.to(device)
-    logits = model(input_batch)
-    loss = torch.nn.functional.cross_entropy(logits.flatten(0, 1), target_batch.flatten())
-    return loss
-
-
-def calc_loss_loader(data_loader, model, device, num_batches=None):
-    total_loss = 0.0
-    if len(data_loader) == 0:
-        return float("nan")
-    elif num_batches is None:
-        num_batches = len(data_loader)
-    else:
-        num_batches = min(num_batches, len(data_loader))
-    for i, (input_batch, target_batch) in enumerate(data_loader):
-        if i < num_batches:
-            loss = calc_loss_batch(input_batch, target_batch, model, device)
-            total_loss += loss.item()
-        else:
-            break
-    return total_loss / num_batches
-
-
-def evaluate_model(model, train_loader, val_loader, device, eval_iter):
-    model.eval()
-    with torch.no_grad():
-        train_loss = calc_loss_loader(train_loader, model, device, num_batches=eval_iter)
-        val_loss = calc_loss_loader(val_loader, model, device, num_batches=eval_iter)
-    model.train()
-    train_perplexity = torch.exp(torch.tensor(train_loss))
-    val_perplexity = torch.exp(torch.tensor(val_loss))
-    return train_loss, val_loss, train_perplexity, val_perplexity
-
-
-def generate_and_print_sample(model: GPTModel, tokenizer, device, start_context, max_new_tokens=50):
-    model.eval()
-    context_size = model.pos_emb.weight.shape[0]
-    encoded = text_to_token_ids(start_context, tokenizer).to(device)
-    with torch.no_grad():
-        token_ids = generate_text_simple(
-            model=model, idx=encoded, max_new_tokens=max_new_tokens, context_size=context_size, use_sampling=True
-        )
-        decoded_text = token_ids_to_text(token_ids, tokenizer)
-        logger.info(f"Sample text generation with context: '{start_context}'\ngenerated text: '{decoded_text.replace('\n', ' ')}'")
-        mlflow.log_text(decoded_text, "artifacts/generated_text.txt")
-    model.train()
 
 
 def train_model_simple(
@@ -214,7 +170,7 @@ def plot_losses(epochs_seen, tokens_seen, train_losses, val_losses):
     # plt.show()
 
 
-def main(model_config, training_config, dataset_config, tokenizer):
+def main(model_config, training_config, dataset_config, tokenizer, model_type: Literal["rnn", "transformer"] = "transformer"):
     torch.manual_seed(123)
     if torch.cuda.is_available():
         device = torch.device("cuda")
@@ -229,7 +185,7 @@ def main(model_config, training_config, dataset_config, tokenizer):
     # Initialize model
     ##############################
 
-    model = GPTModel(model_config)
+    model = get_model(model_type, model_config)
     model.to(device)  # no assignment model = model.to(device) necessary for nn.Module classes
     ##############################
     #  Model summary
@@ -367,12 +323,46 @@ def main(model_config, training_config, dataset_config, tokenizer):
     return train_losses, val_losses, tokens_seen, model, test_loader
 
 
+def str2bool(v):
+    if isinstance(v, bool):
+        return v
+    if v.lower() in ("yes", "true", "t", "1"):
+        return True
+    if v.lower() in ("no", "false", "f", "0"):
+        return False
+    raise argparse.ArgumentTypeError("Boolean value expected.")
+
+
 if __name__ == "__main__":
+    argparse = argparse.ArgumentParser(description="Run Transformer training")
+    argparse.add_argument(
+        "--model_type",
+        choices=["rnn", "transformer"],
+        default="transformer",
+        help="Type of model to train: 'rnn' or 'transformer'",
+    )
+    argparse.add_argument(
+        "--tokenizer",
+        default="papuGaPT2",
+        help="Tokenizer to use",
+    )
+    argparse.add_argument(
+        "--use_tiktoken",
+        type=str2bool,
+        nargs="?",
+        const=True,
+        default=False,
+        help="Whether to use tiktoken for the tokenizer (true/false)",
+    )
+    argparse.add_argument("--dataset_name", type=str, default="wolne_lektury_corpus", help="Name of the Speakleash dataset to use")
+    argparse.add_argument("--max_docs", type=int, default=200, help="Maximum number of documents to use from the dataset")
+
+    args = argparse.parse_args()
+
     ################################
     ########### TOKENIZER ###########
     ################################
-    tokenizer = AutoTokenizer.from_pretrained("flax-community/papuGaPT2")
-    # tokenizer= tiktoken.get_encoding("gpt2")
+    tokenizer = get_tokenizer(args.tokenizer, args.use_tiktoken)
     ################################
     ########### TOKENIZER ###########
     ################################
@@ -381,23 +371,13 @@ if __name__ == "__main__":
     ########### MODEL AND TRAINING CONFIG ###########
     ################################################
     vocab_size = tokenizer.n_vocab if hasattr(tokenizer, "n_vocab") else tokenizer.vocab_size
-    TRANSFORMER_MODEL_CONFIG = TransformerModelConfig(
-        **{
-            "vocab_size": vocab_size,  # Vocabulary size
-            "context_length": 256,  # Shortened context length (orig: 1024)
-            "emb_dim": 768,  # Embedding dimension
-            "n_heads": 12,  # Number of attention heads
-            "n_layers": 12,  # Number of layers
-            "drop_rate": 0.35,  # Dropout rate
-            "qkv_bias": False,  # Query-key-value bias
-            "max_new_tokens": 256,
-        }
-    ).model_dump()
+
+    MODEL_CONFIG = get_model_config(args.model_type, vocab_size=vocab_size)
 
     TRAINING_SETTINGS = ModelTrainingConfig(
         **{
             "learning_rate": 45e-4,
-            "num_epochs": 20,
+            "num_epochs": 5,
             "batch_size": 4,
             "weight_decay": 0.5,
             "optimizer": "adamw",
@@ -407,7 +387,7 @@ if __name__ == "__main__":
     ).model_dump()
 
     DATASET_SETTINGS = DataLoaderConfig(
-        **{"max_docs": 200, "use_speaklesh": True, "speaklesh_dataset_name": "wolne_lektury_corpus"}
+        **{"max_docs": args.max_docs, "use_speaklesh": True, "speaklesh_dataset_name": args.dataset_name}
     ).model_dump()
 
     ################################################
@@ -417,14 +397,20 @@ if __name__ == "__main__":
     ###########################
     # Initiate training
     ###########################
-    START_CONTEXT = "Pierogi ruskie to"
+    START_CONTEXT = "Pierogi ruskie to to jedno z tradycyjnych dań kuchni polskiej"
     with mlflow.start_run():
-        mlflow.log_params(TRANSFORMER_MODEL_CONFIG)
+        logger.info(f"Started training for model type: {args.model_type} with tokenizer: {args.tokenizer}")
+        mlflow.log_params(MODEL_CONFIG)
         mlflow.log_params(TRAINING_SETTINGS)
         mlflow.log_params(DATASET_SETTINGS)
+        mlflow.log_params(
+            {
+                "model_type": args.model_type,
+            }
+        )
 
         train_losses, val_losses, tokens_seen, model, test_loader = main(
-            TRANSFORMER_MODEL_CONFIG, TRAINING_SETTINGS, DATASET_SETTINGS, tokenizer=tokenizer
+            MODEL_CONFIG, TRAINING_SETTINGS, DATASET_SETTINGS, tokenizer=tokenizer, model_type=args.model_type
         )
 
         ###########################
@@ -439,13 +425,13 @@ if __name__ == "__main__":
             device=torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"),
             tokenizer=tokenizer,
             start_context=START_CONTEXT,
-            max_new_tokens=TRANSFORMER_MODEL_CONFIG.get("max_new_tokens"),
+            max_new_tokens=MODEL_CONFIG.get("max_new_tokens"),
         )
         mlflow.log_metrics({"test_loss": test_results["test_loss"]})
 
         # Save and load model
         torch.save(model.state_dict(), f"models/model_id_{mlflow.active_run().info.run_id}.pth")
-        model = GPTModel(TRANSFORMER_MODEL_CONFIG)
+        model = get_model(args.model_type, MODEL_CONFIG)
         model.load_state_dict(torch.load(f"models/model_id_{mlflow.active_run().info.run_id}.pth", weights_only=True))
 
         logger.info("\nFinal Test Results:")
