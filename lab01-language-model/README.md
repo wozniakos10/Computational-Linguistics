@@ -30,4 +30,4 @@ By that, the following can be customized:
 - dataset_name: Name of dataset from speakleash
 - max_docs: Max docs to use from dataset. If max_docs > amount of documents in dataset - all documents will be used
 
-Report containing deeper information and results can be found in `report.md`
+Report containing deeper information and results can be found in [report.md](report.md)
