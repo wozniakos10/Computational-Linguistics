@@ -14,12 +14,12 @@ There is a simple guide through important files:
 - `rnn_based_llm.py` - RNN architecture created in PyTorch
 - `models.py` - Pydantic models for storing models, dataset, and training parameters
 - `utils.py` - Helpful logic like encoding/decoding, loss calculation, etc.
-- `llm_train.py` - Script to run with particular configuration. Most parameters have to be manually changed in that script by editing 
+- `llm_train.py` - Script to run with particular configuration. Most parameters have to be manually changed in that script by editing `MODEL_CONFIG`, `TRAINING_SETTINGS` or `DATASET_SETTINGS`. A couple of parameters and logic are handled by `argparse`.
 - `transformer_inference.py` - Script to test transformer inference efficiency and output quality
 - `rnn_inference.py` - Script to test rnn inference efficiency and output quality
 
 
-`MODEL_CONFIG`, `TRAINING_SETTINGS` or `DATASET_SETTINGS`. A couple of parameters and logic are handled by `argparse`.
+
 Example execution:
 ```
 python llm_train.py --model_type transformer --tokenizer flax-community/papuGaPT2 --dataset_name wolne_lektury_corpus --max_docs 1000000 --use_tiktoken false
