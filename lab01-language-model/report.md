@@ -67,6 +67,10 @@ The RNN model was created based on LSTM. The embedding dimension was 512, and th
 
 The RNN saw more tokens during training and better utilized the GPU but obtained much worse results. I expected that the transformer would process more tokens during training. Perhaps there was some misconfiguration with the transformer training setup, but I'm not sure about those results.
 
+Model summary can be found in [outputs/rnn/model_summary.txt](outputs/rnn/model_summary.txt).
+
+
+
 Here is a GPU utilization comparison
 
 <img src="outputs/gpu_utilization.png" alt="Learning curves" width="1600" height="800"/>
