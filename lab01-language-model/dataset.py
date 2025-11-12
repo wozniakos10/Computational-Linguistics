@@ -1,14 +1,17 @@
-import os
+from pathlib import Path
 
 import tiktoken
 import torch
-from speakleash import Speakleash
-from speakleash.dataset import SpeakleashDataset
 from torch.utils.data import DataLoader, Dataset
+from typing import Literal
+from utils import load_split_data
+from logger import get_configured_logger
+
+logger = get_configured_logger(__name__)
 
 
 def text_to_token_ids(text, tokenizer):
-    encoded = tokenizer.encode(text)
+    encoded = tokenizer.encode(text, add_special_tokens=False)
     encoded_tensor = torch.tensor(encoded).unsqueeze(0)  # add batch dimension
     return encoded_tensor
 
@@ -21,15 +24,13 @@ def token_ids_to_text(token_ids, tokenizer):
 class SpeakleashDataLoader(Dataset):
     def __init__(
         self,
-        dataset: SpeakleashDataset,
         tokenizer,
         max_length,
         stride,
-        max_docs,
+        speakleash_dataset_name,
         split="train",
-        train_ratio=0.8,
-        val_ratio=0.1,
-        only_high_quality=True,
+        dataset_dir="train_datasets",
+        file_type: Literal["jsonl", "txt"] = "txt",
     ):
         """
         Dataset for Polish Wikipedia data with train/validation/test splits.
@@ -39,82 +40,54 @@ class SpeakleashDataLoader(Dataset):
             tokenizer: Tokenizer to encode text
             max_length: Maximum sequence length
             stride: Stride for sliding window
-            max_docs: Maximum number of documents to process
             split: 'train', 'val', or 'test'
             train_ratio: Ratio of data for training (default: 0.8)
             val_ratio: Ratio of data for validation (default: 0.1)
                       test_ratio will be 1 - train_ratio - val_ratio
         """
-        self.dataset = dataset
-        self.dataset_data = self.dataset.ext_data
-
-        self.only_high_quality = only_high_quality
-        # Calculate split indices
-        self.max_docs = min(max_docs, self.dataset.manifest["stats"]["documents"])
 
         self.input_ids = []
         self.target_ids = []
-
-        # Process documents for the specified split with error handling
-        processed_docs = 0
-        skipped_docs = 0
-        current_doc_index = 0
         docs_list = []
-        low_quality_count = 0
-        for doc in self.dataset_data:
-            # Check if we've reached our max_docs limit
-            if len(docs_list) >= self.max_docs:
-                break
-            text, meta = doc
-            quality = meta.get("quality", "")
-            if self.only_high_quality:
-                if quality == "HIGH":
-                    docs_list.append(text)
-                else:
-                    low_quality_count += 1
-            else:
-                docs_list.append(text)
 
-        new_max_docs = min(self.max_docs, len(docs_list))
-        train_end = int(new_max_docs * train_ratio)
-        val_end = int(new_max_docs * (train_ratio + val_ratio))
+        file_path = Path(dataset_dir) / speakleash_dataset_name
+        text_data = load_split_data(data_dir=file_path, split=split, file_type=file_type)
 
-        if split == "train":
-            doc_range = range(0, train_end)
-        elif split == "val":
-            doc_range = range(train_end, val_end)
-        elif split == "test":
-            doc_range = range(val_end, self.max_docs)
-        else:
-            raise ValueError("split must be 'train', 'val', or 'test'")
-
-        for doc in docs_list:
-            if current_doc_index not in doc_range:
-                current_doc_index += 1
-                continue
-
-            try:
-                token_ids = tokenizer.encode(doc)
+        if file_type == "jsonl":
+            # Here's the is assumption that I process each document seperately
+            # maybe it would be better to concataenate all documents and add special tokens between them
+            # like <|end_of_text|> to signal the end of one document and the start of another
+            for doc in docs_list:
+                # not allowing llamatokenizer to add token BOS. It adds it by default
+                token_ids = tokenizer.encode(doc, add_special_tokens=False)
 
                 # Use a sliding window to chunk the document into overlapping sequences of max_length
                 for i in range(0, len(token_ids) - max_length, stride):
                     input_chunk = token_ids[i : i + max_length]
                     target_chunk = token_ids[i + 1 : i + max_length + 1]
+                    if len(input_chunk) != max_length or len(target_chunk) != max_length:
+                        logger.info(f"Chunk length mismatch: {len(input_chunk)} vs {max_length}")
+                        logger.info(f"Inout chunk length: {len(input_chunk)}, Target chunk length: {len(target_chunk)}")
+
+                        raise ValueError("Chunk length does not match max_length")
                     self.input_ids.append(torch.tensor(input_chunk))
                     self.target_ids.append(torch.tensor(target_chunk))
+            logger.info(f"Successfully loaded and processed {len(docs_list)} documents from {file_path}")
+        elif file_type == "txt":
+            # Tokenize the entire text
+            token_ids = tokenizer.encode(text_data, add_special_tokens=False)
 
-                processed_docs += 1
-            except Exception as e:
-                print(f"Skipping corrupted document at index {current_doc_index}: {e}")
-                skipped_docs += 1
-            finally:
-                current_doc_index += 1
+            # Use a sliding window to chunk the book into overlapping sequences of max_length
+            for i in range(0, len(token_ids) - max_length, stride):
+                input_chunk = token_ids[i : i + max_length]
+                target_chunk = token_ids[i + 1 : i + max_length + 1]
+                self.input_ids.append(torch.tensor(input_chunk))
+                self.target_ids.append(torch.tensor(target_chunk))
+            logger.info(f"Successfully loaded and processed text data from {file_path}")
+        else:
+            raise ValueError(f"Unsupported file_type: {file_type}")
 
-        print(
-            f"Successfully processed {processed_docs} documents for '{split}'"
-            f"split, skipped {skipped_docs} corrupted documents\nskipped {low_quality_count} low-quality documents"
-        )
-        print(f"Generated {len(self.input_ids)} sequences")
+        logger.info(f"Generated {len(self.input_ids)} sequences")
 
     def __len__(self):
         return len(self.input_ids)
@@ -133,9 +106,6 @@ def create_speakleash_dataloader(
     drop_last=False,
     num_workers=0,
     split="train",
-    max_docs=100,
-    train_ratio=0.8,
-    val_ratio=0.1,
 ):
     """
     Create a dataloader for Polish Wikipedia data with train/validation/test splits.
@@ -148,28 +118,19 @@ def create_speakleash_dataloader(
         drop_last: Whether to drop the last incomplete batch
         num_workers: Number of worker processes for data loading
         split: 'train', 'val', or 'test'
-        max_docs: Maximum number of documents to process
         train_ratio: Ratio of data for training (default: 0.8)
         val_ratio: Ratio of data for validation (default: 0.1)
 
     Returns:
         DataLoader for the specified split
     """
-    # Initialize Speakleash and get plwiki dataset
-    base_dir = os.path.join(os.path.dirname(__file__))
-    replicate_to = os.path.join(base_dir, "datasets")
-    speakleash = Speakleash(replicate_to)
-    speaklesh_dataset = speakleash.get(speakleash_dataset_name)
-    print(f"Loaded Speakleash dataset '{speakleash_dataset_name}' with {speaklesh_dataset.manifest['stats']['documents']} documents")
+
     dataset = SpeakleashDataLoader(
-        speaklesh_dataset,
         tokenizer,
         max_length,
         stride,
-        max_docs,
         split=split,
-        train_ratio=train_ratio,
-        val_ratio=val_ratio,
+        speakleash_dataset_name=speakleash_dataset_name,
     )
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, drop_last=drop_last, num_workers=num_workers)
     return dataloader
@@ -180,7 +141,6 @@ def get_speaklesh_dataloader(
     batch_size=4,
     max_length=256,
     stride=128,
-    max_docs=100,
     train_ratio=0.8,
     val_ratio=0.1,
     num_workers=0,
@@ -194,7 +154,6 @@ def get_speaklesh_dataloader(
         batch_size: Batch size for the dataloader
         max_length: Maximum sequence length
         stride: Stride for sliding window
-        max_docs: Maximum number of documents to process
         train_ratio: Ratio of data for training (default: 0.8)
         val_ratio: Ratio of data for validation (default: 0.1)
         num_workers: Number of worker processes for data loading
@@ -218,7 +177,6 @@ def get_speaklesh_dataloader(
         drop_last=drop_last,
         num_workers=num_workers,
         split=split,
-        max_docs=max_docs,
         train_ratio=train_ratio,
         val_ratio=val_ratio,
         speakleash_dataset_name=speakleash_dataset_name,
@@ -229,7 +187,6 @@ def create_all_speaklesh_dataloaders(
     batch_size=4,
     max_length=256,
     stride=128,
-    max_docs=100,
     train_ratio=0.8,
     val_ratio=0.1,
     num_workers=0,
@@ -242,13 +199,13 @@ def create_all_speaklesh_dataloaders(
         tuple: (train_dataloader, val_dataloader, test_dataloader)
     """
     train_dataloader = get_speaklesh_dataloader(
-        "train", batch_size, max_length, stride, max_docs, train_ratio, val_ratio, num_workers, speakleash_dataset_name
+        "train", batch_size, max_length, stride, train_ratio, val_ratio, num_workers, speakleash_dataset_name
     )
     val_dataloader = get_speaklesh_dataloader(
-        "val", batch_size, max_length, stride, max_docs, train_ratio, val_ratio, num_workers, speakleash_dataset_name
+        "val", batch_size, max_length, stride, train_ratio, val_ratio, num_workers, speakleash_dataset_name
     )
     test_dataloader = get_speaklesh_dataloader(
-        "test", batch_size, max_length, stride, max_docs, train_ratio, val_ratio, num_workers, speakleash_dataset_name
+        "test", batch_size, max_length, stride, train_ratio, val_ratio, num_workers, speakleash_dataset_name
     )
 
     return train_dataloader, val_dataloader, test_dataloader
@@ -301,7 +258,7 @@ if __name__ == "__main__":
         text_data = file.read()
     # loader = create_dataloader_v1(text_data)
     tokenizer = tiktoken.get_encoding("gpt2")
-    loader = create_speakleash_dataloader(split="test", batch_size=2, max_docs=1000)
+    loader = create_speakleash_dataloader(split="test", batch_size=2)
     iter = 0
     for input_ids, target_ids in loader:
         print(f"Batch {iter}:")

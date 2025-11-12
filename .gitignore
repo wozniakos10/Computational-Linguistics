@@ -221,3 +221,5 @@ mlartifacts/
 *.DS_Store
 models/
 logs/
+
+train_datasets/

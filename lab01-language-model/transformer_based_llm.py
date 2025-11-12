@@ -105,7 +105,11 @@ class TransformerBlock(nn.Module):
 
         # pytorch module
         self.att = nn.MultiheadAttention(
-            embed_dim=cfg["emb_dim"], num_heads=cfg["n_heads"], dropout=cfg["drop_rate"], bias=cfg["qkv_bias"], batch_first=True
+            embed_dim=cfg["emb_dim"],
+            num_heads=cfg["n_heads"],
+            dropout=cfg["drop_rate"],
+            bias=cfg["qkv_bias"],
+            batch_first=True,
         )
         self.ff = FeedForward(cfg)
         self.norm1 = nn.LayerNorm(cfg["emb_dim"])
@@ -119,6 +123,13 @@ class TransformerBlock(nn.Module):
 
         # # Create causal mask for self-attention
         seq_len = x.size(1)
+        # THE TRICKY PART OF ADDING MASK TO PYTORCH MODULES:
+        # https://sanjayasubedi.com.np/deeplearning/masking-in-attention/
+        # In Pytorch scaled_dot_product_attention function when a boolean mask is passed to attn_mask parameter,
+        # a value of True indicates that the element should take part in attention. However in MultiHeadAttention Layer,
+        # TransformerEncoderLayer and TransformerDecoderLayer for a binary mask, a True value indicates that the corresponding key
+        #     value will be ignored for the purpose of attention. Not sure why they implemented it differently, but I will consider
+        #     True value to be ignored during attention calculation.
         causal_mask = torch.triu(torch.ones(seq_len, seq_len), diagonal=1).bool()
         causal_mask = causal_mask.to(x.device)
 
@@ -169,14 +180,21 @@ class GPTModel(nn.Module):
         #     _, batch_size, seq_len = in_idx.shape
         # else:
         batch_size, seq_len = in_idx.shape
+        # print(f"in_idx.shape: {in_idx.shape}")
 
         tok_embeds = self.tok_emb(in_idx)
+        # print(f"tok_embeds.shape: {tok_embeds.shape}")
         pos_embeds = self.pos_emb(torch.arange(seq_len, device=in_idx.device))
+        # print(f"pos_embeds.shape: {pos_embeds.shape}")
         x = tok_embeds + pos_embeds  # Shape [batch_size, num_tokens, emb_size]
         x = self.drop_emb(x)
+        # print(f"x after emb dropout shape: {x.shape}")
         x = self.trf_blocks(x)
+        # print(f"x after transformer blocks shape: {x.shape}")
         x = self.final_norm(x)
+        # print(f"x after final norm shape: {x.shape}")
         logits = self.out_head(x)
+        # print(f"logits shape: {logits.shape}")
         return logits
 
 
@@ -192,10 +210,12 @@ def generate_text_simple(model, idx, max_new_tokens, context_size, temperature=1
         # E.g., if LLM supports only 5 tokens, and the context size is 10
         # then only the last 5 tokens are used as context
         idx_cond = idx[:, -context_size:]
+        # print(f"idx_cond shape: {idx_cond.shape}")
+        # print(f"idx shape: {idx.shape}")
         # Get the predictions
         with torch.no_grad():
             logits = model(idx_cond)
-
+        # print(f"idx shape: {idx_cond.shape}, logits shape: {logits.shape}")
         # Focus only on the last time step
         # (batch, n_token, vocab_size) becomes (batch, vocab_size)
         logits = logits[:, -1, :]

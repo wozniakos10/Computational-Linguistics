@@ -57,11 +57,14 @@ def test_transformer_inference_quality():
         use_sampling=True,
         temperature=3,
     )
+    # prompts = [
+    #     "",
+    #     "Polska to piękny kraj.",
+    #     "W Polsce znajduje się wiele zabytków.",
+    #     "Wawel to zamek królewski w Krakowie.",
+    #
     prompts = [
-        "",
-        "Polska to piękny kraj.",
-        "W Polsce znajduje się wiele zabytków.",
-        "Wawel to zamek królewski w Krakowie.",
+        "Polska to piękny kraj polozony w eruopie srodkowej nad rzeka wisla. Nasza historia sięga 966 roku kiedy mieszko 1 przyjął chrzest."
     ]
     data = {}
     temperatures = [0.7, 1.0, 1.3]
@@ -84,6 +87,7 @@ def test_transformer_inference_quality():
             decoded_text = token_ids_to_text(generated_ids, tokenizer)
             data[temp]["generations"].append(decoded_text)
             print("\n\n")
+            print(data)
 
     with open("transformer_inference_results.json", "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)

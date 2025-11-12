@@ -35,7 +35,6 @@ class ModelTrainingConfig(BaseModel):
 
 
 class DataLoaderConfig(BaseModel):
-    max_docs: int = 100
     use_speaklesh: bool = True
     speaklesh_dataset_name: str = "wolne_lektury_corpus"
 

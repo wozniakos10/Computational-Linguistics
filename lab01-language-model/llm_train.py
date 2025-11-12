@@ -2,8 +2,9 @@
 
 import argparse
 import os
-from typing import Literal
 import time
+from typing import Literal
+
 import matplotlib.pyplot as plt
 import requests
 import torch
@@ -75,7 +76,7 @@ def train_model_simple(
 
         for input_batch, target_batch in train_loader:
             optimizer.zero_grad()  # Reset loss gradients from previous batch iteration
-            loss = calc_loss_batch(input_batch, target_batch, model, device)
+            loss = calc_loss_batch(input_batch, target_batch, model, device, tokenizer, calculate_perplexity=False)
             loss.backward()  # Calculate loss gradients
             optimizer.step()  # Update model weights using loss gradients
             tokens_seen += input_batch.numel()
@@ -89,19 +90,29 @@ def train_model_simple(
                     logger.info(f"Maximum training time of {max_training_minutes} minutes reached. Stopping training.")
                     return train_losses, val_losses, track_tokens_seen
 
-                train_loss, val_loss, train_perplexity, val_perplexity = evaluate_model(model, train_loader, val_loader, device, eval_iter)
+                train_loss, val_loss, train_perplexity, val_perplexity = evaluate_model(
+                    model, train_loader, val_loader, device, eval_iter, tokenizer
+                )
                 train_losses.append(train_loss)
                 val_losses.append(val_loss)
                 track_tokens_seen.append(tokens_seen)
                 logger.info(
-                    f"Epoch: {epoch + 1} (Step {global_step:06d}): Train loss {train_loss:.3f}, Val loss {val_loss:.3f}, Train perplexity {train_perplexity:.3f}, Val perplexity {val_perplexity:.3f}"
+                    f"Epoch: {epoch + 1} (Step {global_step:06d})\n"
+                    f"  Loss:         Train={train_loss:.3f}, Val={val_loss:.3f}\n"
+                    f"  PPL (token):  Train={train_perplexity['per_token']:.3f}, Val={val_perplexity['per_token']:.3f}\n"
+                    f"  PPL (char):   Train={train_perplexity['per_char']:.3f}, Val={val_perplexity['per_char']:.3f}\n"
+                    f"  PPL (word):   Train={train_perplexity['per_word']:.3f}, Val={val_perplexity['per_word']:.3f}"
                 )
                 run.log(
                     {
                         "train_loss": train_loss,
                         "val_loss": val_loss,
-                        "train_perplexity": train_perplexity,
-                        "val_perplexity": val_perplexity,
+                        "train_perplexity_by_token": train_perplexity["per_token"],
+                        "val_perplexity_by_token": val_perplexity["per_token"],
+                        "train_perplexity_by_char": train_perplexity["per_char"],
+                        "val_perplexity_by_char": val_perplexity["per_char"],
+                        "train_perplexity_by_word": train_perplexity["per_word"],
+                        "val_perplexity_by_word": val_perplexity["per_word"],
                         "tokens_seen": tokens_seen,
                         "epoch": epoch + 1,
                         "global_step": global_step,
@@ -124,7 +135,13 @@ def train_model_simple(
 
 
 def evaluate_test_model(
-    model: GPTModel, test_loader, device, tokenizer, start_context="Every effort moves you", max_new_tokens=100, context_size=256
+    model: GPTModel,
+    test_loader,
+    device,
+    tokenizer,
+    start_context="Every effort moves you",
+    max_new_tokens=100,
+    context_size=256,
 ):
     """
     Evaluate the trained model on the test dataset.
@@ -145,11 +162,12 @@ def evaluate_test_model(
     # Calculate test loss
     model.eval()
     with torch.no_grad():
-        test_loss = calc_loss_loader(test_loader, model, device)
-        test_perplexity = torch.exp(torch.tensor(test_loss))
+        test_loss, perp_by_token, perp_by_char, perp_by_word = calc_loss_loader(test_loader, model, device, tokenizer)
 
     logger.info(f"Test Loss: {test_loss:.4f}")
-    logger.info(f"Test Perplexity: {test_perplexity:.4f}")
+    logger.info(f"Test Perplexity (Token): {perp_by_token:.4f}")
+    logger.info(f"Test Perplexity (Char): {perp_by_char:.4f}")
+    logger.info(f"Test Perplexity (Word): {perp_by_word:.4f}")
 
     encoded = text_to_token_ids(start_context, tokenizer).to(device)
 
@@ -161,7 +179,14 @@ def evaluate_test_model(
         # Generate sample text
     logger.info(f"\nSample text generation with context: '{start_context}'\ngenerated text: '{decoded_text.replace('\n', ' ')}'")
 
-    return {"test_loss": test_loss, "sample_text": decoded_text, "test_perplexity": test_perplexity}
+    return {
+        "test_loss": test_loss,
+        "sample_text": decoded_text,
+        "test_perplexity_by_token": perp_by_token,
+        "test_perplexity_by_char": perp_by_char,
+        "test_perplexity_by_word": perp_by_word,
+        "test_perplexity": perp_by_token,
+    }
 
 
 def plot_losses(epochs_seen, tokens_seen, train_losses, val_losses):
@@ -220,7 +245,6 @@ def main(
     optimizer = optimizer_mapper[training_config["optimizer"]](
         model.parameters(), lr=training_config["learning_rate"], weight_decay=training_config["weight_decay"]
     )
-    max_docs = dataset_config.get("max_docs", None)
     tokenizer_name = tokenizer.name if hasattr(tokenizer, "name") else tokenizer.__class__.__name__
     run.config.update(
         {
@@ -240,12 +264,11 @@ def main(
     # Speaklesh dataset
     if dataset_config.get("use_speaklesh", False):
         logger.info("Using Speakleash dataset for training/validation/testing")
-        # Use smaller stride for better overlap and more training data
-        stride = model_config["context_length"] // 2  # Use 1/4 of context length for better overlap
+        # As there is a lot of training data, stride can be equal to context length
+        stride = model_config["context_length"]
         train_loader = create_speakleash_dataloader(
             split="train",
             batch_size=training_config["batch_size"],
-            max_docs=max_docs,
             stride=stride,
             tokenizer=tokenizer,
             max_length=model_config["context_length"],
@@ -254,7 +277,6 @@ def main(
         val_loader = create_speakleash_dataloader(
             split="val",
             batch_size=training_config["batch_size"],
-            max_docs=max_docs,
             stride=stride,
             tokenizer=tokenizer,
             max_length=model_config["context_length"],
@@ -263,7 +285,6 @@ def main(
         test_loader = create_speakleash_dataloader(
             split="test",
             batch_size=training_config["batch_size"],
-            max_docs=max_docs,
             stride=stride,
             tokenizer=tokenizer,
             max_length=model_config["context_length"],
@@ -370,18 +391,16 @@ if __name__ == "__main__":
     argparse.add_argument(
         "--tokenizer",
         default="papuGaPT2",
-        help="Tokenizer to use",
+        help="Tokenizer to use. Provide tokenizer name or path",
     )
     argparse.add_argument(
-        "--use_tiktoken",
-        type=str2bool,
-        nargs="?",
-        const=True,
-        default=False,
-        help="Whether to use tiktoken for the tokenizer (true/false)",
+        "--tokenizer_type",
+        type=str,
+        choices=["tiktoken", "transformers", "sentence_piece", "custom"],
+        default="tiktoken",
+        help="Type of tokenizer to use: tiktoken, transformers, sentence_piece, or custom",
     )
     argparse.add_argument("--dataset_name", type=str, default="wolne_lektury_corpus", help="Name of the Speakleash dataset to use")
-    argparse.add_argument("--max_docs", type=int, default=200, help="Maximum number of documents to use from the dataset")
     argparse.add_argument("--max_training_minutes", type=int, default=60, help="Maximum training time in minutes")
 
     args = argparse.parse_args()
@@ -391,7 +410,7 @@ if __name__ == "__main__":
         project=os.getenv("WANDB_PROJECT"),
         config={
             "tokenizer_script_arg_name": args.tokenizer,
-            "use_tiktoken": args.use_tiktoken,
+            "tokenizer_type": args.tokenizer_type,
         },
         settings=wandb.Settings(),
     )
@@ -401,7 +420,7 @@ if __name__ == "__main__":
     ################################
     ########### TOKENIZER ###########
     ################################
-    tokenizer = get_tokenizer(args.tokenizer, args.use_tiktoken)
+    tokenizer = get_tokenizer(args.tokenizer, args.tokenizer_type)
     ################################
     ########### TOKENIZER ###########
     ################################
@@ -420,15 +439,13 @@ if __name__ == "__main__":
             "batch_size": 64,
             "weight_decay": 0.1,
             "optimizer": "adamw",
-            "eval_freq": 50,
-            "eval_iter": 10,
+            "eval_freq": 1,
+            "eval_iter": 1,
             "max_training_minutes": args.max_training_minutes,
         }
     ).model_dump()
 
-    DATASET_SETTINGS = DataLoaderConfig(
-        **{"max_docs": args.max_docs, "use_speaklesh": True, "speaklesh_dataset_name": args.dataset_name}
-    ).model_dump()
+    DATASET_SETTINGS = DataLoaderConfig(**{"use_speaklesh": True, "speaklesh_dataset_name": args.dataset_name}).model_dump()
 
     ################################################
     ########### MODEL AND TRAINING CONFIG ###########
@@ -458,9 +475,15 @@ if __name__ == "__main__":
         tokenizer=tokenizer,
         start_context=START_CONTEXT,
         max_new_tokens=MODEL_CONFIG.get("max_new_tokens"),
-        context_length=MODEL_CONFIG.get("context_length"),
     )
-    run.log({"test_loss": test_results["test_loss"], "test_perplexity": test_results["test_perplexity"]})
+    run.log(
+        {
+            "test_loss": test_results["test_loss"],
+            "test_perplexity_by_token": test_results["test_perplexity_by_token"],
+            "test_perplexity_by_char": test_results["test_perplexity_by_char"],
+            "test_perplexity_by_word": test_results["test_perplexity_by_word"],
+        }
+    )
 
     # Save and load model
     model_path = f"models/{run.id}/final_model.pth"
