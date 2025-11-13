@@ -439,8 +439,8 @@ if __name__ == "__main__":
             "batch_size": 64,
             "weight_decay": 0.1,
             "optimizer": "adamw",
-            "eval_freq": 1,
-            "eval_iter": 1,
+            "eval_freq": 100,
+            "eval_iter": 10,
             "max_training_minutes": args.max_training_minutes,
         }
     ).model_dump()

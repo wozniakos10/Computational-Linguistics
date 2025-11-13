@@ -49,7 +49,7 @@ def get_model_config(model_type: Literal["rnn", "transformer"], vocab_size: int 
             context_length=256,
             emb_dim=768,
             n_heads=12,
-            n_layers=2,
+            n_layers=12,
             drop_rate=0.2,
             qkv_bias=False,
             max_new_tokens=256,
