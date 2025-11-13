@@ -1,11 +1,12 @@
 from pathlib import Path
+from typing import Literal
 
 import tiktoken
 import torch
 from torch.utils.data import DataLoader, Dataset
-from typing import Literal
-from utils import load_split_data
+
 from logger import get_configured_logger
+from utils import load_split_data
 
 logger = get_configured_logger(__name__)
 
@@ -30,7 +31,7 @@ class SpeakleashDataLoader(Dataset):
         speakleash_dataset_name,
         split="train",
         dataset_dir="train_datasets",
-        file_type: Literal["jsonl", "txt"] = "txt",
+        file_type: Literal["jsonl", "txt"] = "jsonl",
     ):
         """
         Dataset for Polish Wikipedia data with train/validation/test splits.
@@ -48,7 +49,6 @@ class SpeakleashDataLoader(Dataset):
 
         self.input_ids = []
         self.target_ids = []
-        docs_list = []
 
         file_path = Path(dataset_dir) / speakleash_dataset_name
         text_data = load_split_data(data_dir=file_path, split=split, file_type=file_type)
@@ -57,8 +57,9 @@ class SpeakleashDataLoader(Dataset):
             # Here's the is assumption that I process each document seperately
             # maybe it would be better to concataenate all documents and add special tokens between them
             # like <|end_of_text|> to signal the end of one document and the start of another
-            for doc in docs_list:
+            for doc in text_data:
                 # not allowing llamatokenizer to add token BOS. It adds it by default
+
                 token_ids = tokenizer.encode(doc, add_special_tokens=False)
 
                 # Use a sliding window to chunk the document into overlapping sequences of max_length
@@ -72,13 +73,15 @@ class SpeakleashDataLoader(Dataset):
                         raise ValueError("Chunk length does not match max_length")
                     self.input_ids.append(torch.tensor(input_chunk))
                     self.target_ids.append(torch.tensor(target_chunk))
-            logger.info(f"Successfully loaded and processed {len(docs_list)} documents from {file_path}")
+            logger.info(f"Successfully loaded and processed {len(text_data)} documents from {file_path}")
         elif file_type == "txt":
             # Tokenize the entire text
+            print("test")
             token_ids = tokenizer.encode(text_data, add_special_tokens=False)
 
             # Use a sliding window to chunk the book into overlapping sequences of max_length
             for i in range(0, len(token_ids) - max_length, stride):
+                print(i)
                 input_chunk = token_ids[i : i + max_length]
                 target_chunk = token_ids[i + 1 : i + max_length + 1]
                 self.input_ids.append(torch.tensor(input_chunk))

@@ -89,32 +89,35 @@ def token_ids_to_text(token_ids, tokenizer):
 def calc_loss_batch(input_batch, target_batch, model, device, tokenizer, calculate_perplexity=False):
     input_batch, target_batch = input_batch.to(device), target_batch.to(device)
     logits = model(input_batch)
+
     if calculate_perplexity:
-        # sum loss for perplexity calculation
-        sum_loss = torch.nn.functional.cross_entropy(logits.flatten(0, 1), target_batch.flatten(), reduction="sum")
+        sum_loss = torch.nn.functional.cross_entropy(
+            logits.flatten(0, 1), target_batch.flatten(), reduction="sum", ignore_index=tokenizer.pad_token_id
+        )
 
-        pred_tokens = torch.argmax(logits, dim=-1, keepdim=True)
+        mean_loss = torch.nn.functional.cross_entropy(logits.flatten(0, 1), target_batch.flatten(), ignore_index=tokenizer.pad_token_id)
 
-        # # reshape for fit function
-        decoded_text = token_ids_to_text(pred_tokens.flatten(0, 1).squeeze(1), tokenizer)
-        print(decoded_text)
-        # normzalize with batch size
-        char_amount = len(decoded_text)
+        # NOTE:
+        # Previously, perplexity was computed incorrectly — it was normalized
+        # using the number of words and characters in the model predictions.
+        # Perplexity should instead be normalized using the target text,
+        # since it measures how well the model predicts the actual data.
+        decoded_target = token_ids_to_text(target_batch.flatten(), tokenizer)
+        char_amount = len(decoded_target)
+        words_amount = len(decoded_target.split())
 
-        # calculating words just by splitting by space and normalize with batch size
-        words_amount = len(decoded_text.split())
-        mean_loss = torch.nn.functional.cross_entropy(logits.flatten(0, 1), target_batch.flatten())
+        # number of valid tokens (exclude padding)
+        valid_tokens = (target_batch != tokenizer.pad_token_id).sum()
 
-        # This line gave same results as: torch.epx(mean_loss)
-        perplexity_by_token = torch.exp(sum_loss / (input_batch.shape[0] * input_batch.shape[1]))
+        # compute perplexity
+        perplexity_by_token = torch.exp(sum_loss / valid_tokens)
         perplexity_by_char = torch.exp(sum_loss / char_amount)
         perplexity_by_word = torch.exp(sum_loss / words_amount)
 
         return mean_loss, perplexity_by_token, perplexity_by_char, perplexity_by_word
 
     else:
-        loss = torch.nn.functional.cross_entropy(logits.flatten(0, 1), target_batch.flatten())
-
+        loss = torch.nn.functional.cross_entropy(logits.flatten(0, 1), target_batch.flatten(), ignore_index=tokenizer.pad_token_id)
         return loss
 
 
