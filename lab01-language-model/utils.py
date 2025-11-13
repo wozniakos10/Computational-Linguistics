@@ -90,19 +90,19 @@ def calc_loss_batch(input_batch, target_batch, model, device, tokenizer, calcula
     input_batch, target_batch = input_batch.to(device), target_batch.to(device)
     logits = model(input_batch)
 
-    if calculate_perplexity:
-        sum_loss = torch.nn.functional.cross_entropy(
-            logits.flatten(0, 1), target_batch.flatten(), reduction="sum", ignore_index=tokenizer.pad_token_id
-        )
+    logits_flat = logits.flatten(0, 1)
+    targets_flat = target_batch.flatten()
 
-        mean_loss = torch.nn.functional.cross_entropy(logits.flatten(0, 1), target_batch.flatten(), ignore_index=tokenizer.pad_token_id)
+    if calculate_perplexity:
+        sum_loss = F.cross_entropy(logits_flat, targets_flat, reduction="sum", ignore_index=tokenizer.pad_token_id)
+        mean_loss = F.cross_entropy(logits_flat, targets_flat, ignore_index=tokenizer.pad_token_id)
 
         # NOTE:
         # Previously, perplexity was computed incorrectly — it was normalized
         # using the number of words and characters in the model predictions.
         # Perplexity should instead be normalized using the target text,
         # since it measures how well the model predicts the actual data.
-        decoded_target = token_ids_to_text(target_batch.flatten(), tokenizer)
+        decoded_target = token_ids_to_text(targets_flat.cpu(), tokenizer)
         char_amount = len(decoded_target)
         words_amount = len(decoded_target.split())
 
@@ -117,7 +117,7 @@ def calc_loss_batch(input_batch, target_batch, model, device, tokenizer, calcula
         return mean_loss, perplexity_by_token, perplexity_by_char, perplexity_by_word
 
     else:
-        loss = torch.nn.functional.cross_entropy(logits.flatten(0, 1), target_batch.flatten(), ignore_index=tokenizer.pad_token_id)
+        loss = F.cross_entropy(logits_flat, targets_flat, ignore_index=tokenizer.pad_token_id)
         return loss
 
 
