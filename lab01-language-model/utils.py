@@ -13,6 +13,7 @@ from logger import get_configured_logger
 from models import RnnModelConfig, TransformerModelConfig
 from rnn_based_llm import RnnBasedModel
 from transformer_based_llm import GPTModel, generate_text_simple
+import time
 
 logger = get_configured_logger("llm_train", log_file="logs/llm_train.log")
 
@@ -126,6 +127,7 @@ def calc_loss_loader(data_loader, model, device, tokenizer, num_batches=None):
     perplexity_per_token = 0.0
     perplexity_per_char = 0.0
     perplexity_per_word = 0.0
+    start = time.time()
     if len(data_loader) == 0:
         return float("nan")
     elif num_batches is None:
@@ -143,6 +145,9 @@ def calc_loss_loader(data_loader, model, device, tokenizer, num_batches=None):
             perplexity_per_word += per_per_word
         else:
             break
+
+    end = time.time()
+    logger.info(f"Calculated loss over {num_batches} batches in {end - start} seconds")
     return (
         total_loss / num_batches,
         perplexity_per_token / num_batches,
