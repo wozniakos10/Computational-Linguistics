@@ -1,33 +1,65 @@
-In this laboratory the goal was to train from scratch a language model that generates sentences in Polish language with 2 architectures:
+# Lab 01: Language Modeling (+ Lab 02 Extensions)
 
-- RNN
-- Transformer (decoder only)
+This directory contains implementations for training Polish language models from scratch. The code was initially developed for Lab 01 and later extended to support Lab 02 requirements without unnecessary duplication.
 
-For the transformer, a GPT-2 like architecture was used and for the RNN, an architecture based on LSTM.
-Polish language data was grabbed from [speakleash](https://github.com/speakleash/speakleash)
+## Overview
 
-## Content
-There is a simple guide through important files:
+### Lab 01: Language Modeling
+Goal: Train language models that generate sentences in Polish using two different architectures:
+- **RNN** (LSTM-based architecture)
+- **Transformer** (GPT-2-like decoder-only architecture)
 
-- `dataset.py` - PyTorch dataloader for speakleash data
-- `transformer_based_llm.py` - GPT-2 like architecture created in PyTorch
-- `rnn_based_llm.py` - RNN architecture created in PyTorch
-- `models.py` - Pydantic models for storing models, dataset, and training parameters
-- `utils.py` - Helpful logic like encoding/decoding, loss calculation, etc.
-- `llm_train.py` - Script to run with particular configuration. Most parameters have to be manually changed in that script by editing `MODEL_CONFIG`, `TRAINING_SETTINGS` or `DATASET_SETTINGS`. A couple of parameters and logic are handled by `argparse`.
+[Lab 01 Instructions](https://github.com/apohllo/computational-linguistics/blob/main/1-language-modeling.md)
+
+### Lab 02: Tokenization (Extensions)
+Goal: Train custom tokenizers and compare training results across three different tokenization methods:
+- Pre-trained tokenizer
+- SentencePiece tokenizer
+- Whitespace tokenizer
+
+[Lab 02 Instructions](https://github.com/apohllo/computational-linguistics/blob/main/2-tokenization.md)
+
+**Note:** This codebase was extended to support Lab 02 requirements by adding tokenization capabilities, allowing the same implementation to be used for both laboratories.
+
+## Data Source
+
+Polish language data is retrieved from [speakleash](https://github.com/speakleash/speakleash).
+
+## Key Extensions for Lab 02
+
+- Added `custom_tokenizers.py` implementing classes for training whitespace and SentencePiece tokenizers
+- Adjusted `llm_train.py` script to support different tokenizer types
+- Created script to retrieve data from Speakleash and save as TXT/JSONL files
+- Modified solution to use previously saved datasets (TXT/JSONL files) instead of retrieving from Speakleash API each time
+- This improvement was necessary because retrieving data from the Speakleash API requires downloading the file manifest each time, even when the dataset is already downloaded to disk
+
+## File Structure
+
+- `dataset.py` - PyTorch dataloader for Speakleash data
+- `transformer_based_llm.py` - GPT-2-like architecture implemented in PyTorch
+- `rnn_based_llm.py` - RNN architecture implemented in PyTorch
+- `models.py` - Pydantic models for storing model, dataset, and training parameters
+- `utils.py` - Helper functions for encoding/decoding, loss calculation, etc.
+- `llm_train.py` - Main training script with configurable parameters. Most parameters are set by manually editing `MODEL_CONFIG`, `TRAINING_SETTINGS`, or `DATASET_SETTINGS`. Additional parameters are handled via `argparse`
 - `transformer_inference.py` - Script to test transformer inference efficiency and output quality
-- `rnn_inference.py` - Script to test rnn inference efficiency and output quality
+- `rnn_inference.py` - Script to test RNN inference efficiency and output quality
+- `custom_tokenizers.py` - Implementation of custom whitespace and SentencePiece tokenizers
 
+## Usage
 
-
-Example execution:
+### Example Execution
+```bash
+python llm_train.py --model_type transformer --tokenizer speakleash/Bielik-4.5B-v3 --dataset_name plwiki --tokenizer_type transformers --max_training_minutes 120
 ```
-python llm_train.py --model_type transformer --tokenizer flax-community/papuGaPT2 --dataset_name wolne_lektury_corpus --max_docs 1000000 --use_tiktoken false
-```
-By that, the following can be customized:
-- model_type: transformer or rnn
-- tokenizer and use_tiktoken: Tokenizer name and information if it is available in tiktoken. If use_tiktoken is set to false, `AutoTokenizer` from `Transformers` will be used.
-- dataset_name: Name of dataset from speakleash
-- max_docs: Max docs to use from dataset. If max_docs > amount of documents in dataset - all documents will be used
 
-Report containing deeper information and results can be found in [report.md](report.md)
+### Configurable Parameters
+
+- `model_type` - Architecture type: `transformer` or `rnn`
+- `tokenizer` - Tokenizer name or path
+- `tokenizer_type` - Tokenizer type: `transformers`, `sentencepiece`, or `custom` (whitespace)
+- `dataset_name` - Name of dataset from Speakleash
+- `max_training_minutes` - Maximum training duration in minutes
+
+## Results
+
+A detailed report containing in-depth information and results for Lab 01 can be found in [report.md](report.md).
