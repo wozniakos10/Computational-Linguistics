@@ -62,4 +62,6 @@ python llm_train.py --model_type transformer --tokenizer speakleash/Bielik-4.5B-
 
 ## Results
 
-A detailed report containing in-depth information and results for Lab 01 can be found in [report.md](report.md).
+A detailed report containing in-depth information and results for Lab 01 can be found in [Report](report.md).
+
+A detailed report containing in-depth information and results for Lab 02 can be found in [Report](report_lab02.md).
