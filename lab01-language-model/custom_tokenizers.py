@@ -1,10 +1,12 @@
 import json
 import os
 import re
+import time
 from collections import Counter
 from typing import List, Literal
 
 import sentencepiece as spm
+from transformers import AutoTokenizer
 
 from logger import get_configured_logger
 
@@ -166,7 +168,7 @@ class SimpleTokenizer:
     def __init__(self, vocab_file_path: str):
         self.token_to_id, self.id_to_token = self.load_vocab(vocab_file_path)
         self.vocab_size = len(self.token_to_id)
-        self.name = "SimpleTokenizer"
+        self.name = "WhiteSpaceTokenizer"
 
     def load_vocab(self, vocab_file_path: str):
         """
@@ -220,6 +222,10 @@ class SimpleTokenizer:
         text = re.sub(r'\s+([,.?!"()\'])', r"\1", text)
         return text
 
+    def convert_ids_to_tokens(self, token_ids: List[int], skip_special_tokens) -> List[str]:
+        tokens_to_text = [self.id_to_token.get(idx, self.unk_token) for idx in token_ids]
+        return tokens_to_text
+
 
 def train_sentencepiece_tokenizer(input_file: str, model_prefix: str, vocab_size: int, model_type: Literal["unigram", "bpe"]):
     """
@@ -271,6 +277,10 @@ class SentencePieceTokenizer:
         self.eos_token_id = self.sp.eos_id()
         self.bos_token_id = self.sp.bos_id()
         self.pad_token_id = self.sp.pad_id()
+        self.bos_token = self.sp.id_to_piece(self.bos_token_id)
+        self.eos_token = self.sp.id_to_piece(self.eos_token_id)
+        self.unk_token = self.sp.id_to_piece(self.unk_token_id)
+        self.pad_token = self.sp.id_to_piece(self.pad_token_id)
         self.name = "SentencePieceTokenizer"
         self.vocab_size = self.sp.get_piece_size()
 
@@ -282,31 +292,184 @@ class SentencePieceTokenizer:
         text = self.sp.decode_ids(token_ids)
         return text
 
+    def convert_ids_to_tokens(self, token_ids: List[int], skip_special_tokens) -> List[str]:
+        tokens_to_text = [self.sp.decode_ids(idx) for idx in token_ids]
+        return tokens_to_text
+
+
+def calculate_oov_whitespace():
+    tokenizer = SimpleTokenizer(vocab_file_path="tokenizers/custom_tokenizer_vocab.json")
+
+    splits = {
+        "train": load_split_data(data_dir="train_datasets/plwiki", split="train", file_type="txt"),
+        "val": load_split_data(data_dir="train_datasets/plwiki", split="val", file_type="txt"),
+        "test": load_split_data(data_dir="train_datasets/plwiki", split="test", file_type="txt"),
+    }
+
+    stats = {}
+    for split_name, texts in splits.items():
+        encoded = tokenizer.encode(texts)
+
+        stats[split_name] = {
+            "token_count": len(encoded),
+            "oov_count": encoded.count(tokenizer.unk_token_id),
+            "oov_ratio": encoded.count(tokenizer.unk_token_id) / len(encoded),
+        }
+
+    return stats
+
+
+def compare_tokenizers_throughput():
+    llama_fast_tokenizer = AutoTokenizer.from_pretrained("speakleash/Bielik-4.5B-v3")
+    sentence_piece_tokenizer = SentencePieceTokenizer(model_file_path="tokenizers/plwiki_unigram.model")
+    simple_tokenizer = SimpleTokenizer(vocab_file_path="tokenizers/custom_tokenizer_vocab.json")
+    val_data = load_split_data(data_dir="train_datasets/plwiki", split="val", file_type="txt")
+    repeat_count = 3
+    results = {}
+    for tokenizer in [llama_fast_tokenizer, sentence_piece_tokenizer, simple_tokenizer]:
+        tokens_per_second_lst = []
+        tokens_count = []
+        tokenizer_name = tokenizer.name if hasattr(tokenizer, "name") else tokenizer.__class__.__name__
+        for idx in range(repeat_count):
+            print(f"Tokenizer name: {tokenizer_name}. Run {idx + 1}/{repeat_count}")
+            start_time = time.time()
+            token_ids = tokenizer.encode(val_data)
+            end_time = time.time()
+            elapsed_time = end_time - start_time
+            tokens_count.append(len(token_ids))
+            tokens_per_second_lst.append(len(token_ids) / elapsed_time)
+
+        results[tokenizer_name] = {
+            "avg_tokens_per_second": sum(tokens_per_second_lst) / repeat_count,
+            "tokens_count": sum(tokens_count) / repeat_count,
+        }
+        logger.info(f"Tokenizer: {tokenizer_name}, Time taken for val set: {elapsed_time:.2f} seconds")
+    return results
+
+
+def calculate_avg_token_per_word():
+    simple_tokenizer = SimpleTokenizer(vocab_file_path="tokenizers/custom_tokenizer_vocab.json")
+    llama_fast_tokenizer = AutoTokenizer.from_pretrained("speakleash/Bielik-4.5B-v3")
+    sentence_piece_tokenizer = SentencePieceTokenizer(model_file_path="tokenizers/plwiki_unigram.model")
+    val_data = load_split_data(data_dir="train_datasets/plwiki", split="val", file_type="txt")
+    results = {}
+    for tokenizer in [simple_tokenizer, sentence_piece_tokenizer, llama_fast_tokenizer]:
+        tokenizer_name = tokenizer.name if hasattr(tokenizer, "name") else tokenizer.__class__.__name__
+        token_ids = tokenizer.encode(val_data)
+        total_tokens = len(token_ids)
+        total_words = len(val_data.split())
+        avg_tokens_per_word = total_tokens / total_words
+        results[tokenizer_name] = {
+            "total_tokens": total_tokens,
+            "total_words": total_words,
+            "avg_tokens_per_word": avg_tokens_per_word,
+        }
+    return results
+
+
+def count_direct_encoded_words_alternative(tokenizer, text):
+    words = text.split()
+    direct_count = 0
+
+    for word in words:
+        # tokenize
+        token_ids = tokenizer.encode(word, add_special_tokens=False)
+
+        # Check if single token and different than unk_token
+        if len(token_ids) == 1 and token_ids[0] != tokenizer.unk_token_id:
+            # Decode and compare
+            decoded = tokenizer.decode(token_ids).strip()
+            if decoded.lower() == word.lower():
+                direct_count += 1
+
+    return {
+        "direct_count": direct_count,
+        "total_words": len(words),
+        "direct_percentage": (direct_count / len(words)) * 100,
+    }
+
+
+def compare_tokenizers_on_samples():
+    simple_tokenizer = SimpleTokenizer(vocab_file_path="tokenizers/custom_tokenizer_vocab.json")
+    llama_fast_tokenizer = AutoTokenizer.from_pretrained("speakleash/Bielik-4.5B-v3")
+    sentence_piece_tokenizer = SentencePieceTokenizer(model_file_path="tokenizers/plwiki_unigram.model")
+
+    sample_texts = [
+        "To jest przykładowy tekst do tokenizacji. Sprawdzimy, jak różne tokenizatory radzą sobie z tym zdaniem. Polska literatura oferuje wiele interesujących dzieł, które warto przeczytać. Czytanie książek rozwija wyobraźnię i poszerza horyzonty myślowe.",
+        "Tokenizacja jest kluczowym krokiem w przetwarzaniu języka naturalnego. Różne podejścia mogą prowadzić do różnych wyników. Algorytmy uczenia maszynowego wymagają odpowiedniego przygotowania danych wejściowych. Właściwe przetwarzanie tekstu wpływa na jakość modeli sztucznej inteligencji.",
+        "W dzisiejszych czasach modele językowe stają się coraz bardziej zaawansowane, a tokenizacja odgrywa ważną rolę w ich skuteczności. Nowoczesne technologie przekształcają sposób, w jaki komunikujemy się i przetwarzamy informacje. Rozwój sztucznej inteligencji otwiera nowe możliwości w wielu dziedzinach nauki.",
+    ]
+
+    results = {}
+    for tokenizer in [simple_tokenizer, sentence_piece_tokenizer, llama_fast_tokenizer]:
+        tokenizer_name = tokenizer.name if hasattr(tokenizer, "name") else tokenizer.__class__.__name__
+        results[tokenizer_name] = {}
+        for text in sample_texts:
+            token_ids = tokenizer.encode(text)
+            total_tokens = len(token_ids)
+            total_words = len(text.split())
+            avg_tokens_per_word = total_tokens / total_words
+            results[tokenizer_name][text] = {
+                "total_tokens": total_tokens,
+                "total_words": total_words,
+                "avg_tokens_per_word": avg_tokens_per_word,
+                "obtained_tokens": tokenizer.convert_ids_to_tokens(token_ids, skip_special_tokens=True),
+            }
+
+            direct_encoding_stats = count_direct_encoded_words_alternative(tokenizer, text)
+            results[tokenizer_name][text].update(direct_encoding_stats)
+    return results
+
 
 if __name__ == "__main__":
-    # training custom tokenizer
-    texts = load_split_data(data_dir="train_datasets/plwiki", split="train", file_type="txt")
-    builder = SimpleTokenizerBuilder(vocab_size=32000)
-    vocab = builder.build_vocab(texts, save_path="tokenizers/custom_tokenizer_vocab.json")
+    # result = calculate_oov_whitespace()
+    # print("OOV Statistics:")
+    # print(json.dumps(result, indent=2))
 
-    tokenizer = SimpleTokenizer(vocab_file_path="tokenizers/custom_tokenizer_vocab.json")
-    print(tokenizer.name)
-    print(f"Vocab size: {tokenizer.vocab_size}")
-    sample_text = "To jest testowy tekst."
-    encoded = tokenizer.encode(sample_text)
-    decoded = tokenizer.decode(encoded)
-    print(f"Sample text: {sample_text}")
-    print(f"Encoded: {encoded}")
-    print(f"Decoded: {decoded}")
-    print("testing special tokens")
-    print(tokenizer.decode([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 29999, 29998]))
-    # # training sentencepiece tokenizer
-    train_sentencepiece_tokenizer(
-        input_file="train_datasets/plwiki/train.txt",
-        model_prefix="plwiki_unigram",
-        vocab_size=32000,
-        model_type="unigram",
-    )
+    # result = compare_tokenizers_throughput()
+    # print("Tokenizer Throughput Comparison:")
+    # print(json.dumps(result, indent=2))
+    # with open("tokenizer_throughput_comparison.json", "w", encoding="utf-8") as f:
+    #     json.dump(result, f, ensure_ascii=False, indent=2)
+
+    # result = calculate_avg_token_per_word()
+    # print("Average Tokens per Word:")
+    # print(json.dumps(result, indent=2))
+    # with open("avg_tokens_per_word.json", "w", encoding="utf-8") as f:
+    #     json.dump(result, f, ensure_ascii=False, indent=2)
+
+    results = compare_tokenizers_on_samples()
+    print("Tokenizer Comparison on Sample Texts:")
+    print(results)
+    print(json.dumps(results, indent=2, ensure_ascii=False))
+    with open("tokenizer_comparison_on_samples.json", "w", encoding="utf-8") as f:
+        json.dump(results, f, ensure_ascii=False, indent=2)
+
+    # with open("oov_stats_whitespace.json", "w", encoding="utf-8") as f:
+    #     json.dump(result, f, ensure_ascii=False, indent=2)
+    # training custom tokenizer
+    # texts = load_split_data(data_dir="train_datasets/plwiki", split="train", file_type="txt")
+    # builder = SimpleTokenizerBuilder(vocab_size=32000)
+    # vocab = builder.build_vocab(texts, save_path="tokenizers/custom_tokenizer_vocab.json")
+
+    # tokenizer = SimpleTokenizer(vocab_file_path="tokenizers/custom_tokenizer_vocab.json")
+    # print(tokenizer.name)
+    # print(f"Vocab size: {tokenizer.vocab_size}")
+    # sample_text = "To jest testowy tekst."
+    # encoded = tokenizer.encode(sample_text)
+    # decoded = tokenizer.decode(encoded)
+    # print(f"Sample text: {sample_text}")
+    # print(f"Encoded: {encoded}")
+    # print(f"Decoded: {decoded}")
+    # print("testing special tokens")
+    # print(tokenizer.decode([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 29999, 29998]))
+    # # # training sentencepiece tokenizer
+    # train_sentencepiece_tokenizer(
+    #     input_file="train_datasets/plwiki/train.txt",
+    #     model_prefix="plwiki_unigram",
+    #     vocab_size=32000,
+    #     model_type="unigram",
+    # )
 
     # # testing tokenizers
     # custom_tokenizer = SimpleTokenizer(vocab_file_path="vocab.json")
@@ -314,9 +477,9 @@ if __name__ == "__main__":
     # sp_tokenizer_bpe = spm.SentencePieceProcessor()
     # sp_tokenizer_bpe.load("plwiki_unigram.model")
 
-    sp_tokenizer_unigram = SentencePieceTokenizer(model_file_path="plwiki_unigram.model")
+    # sp_tokenizer_unigram = SentencePieceTokenizer(model_file_path="plwiki_unigram.model")
 
-    custom_text = "To jest przykładowy tekst do tokenizacji dupadupadupajas"
+    # custom_text = "To jest przykładowy tekst do tokenizacji dupadupadupajas"
 
     # custom_encoded = custom_tokenizer.encode(custom_text)
     # custom_decoded = custom_tokenizer.decode(custom_encoded)
@@ -324,8 +487,8 @@ if __name__ == "__main__":
     # sp_encoded_bpe = sp_tokenizer_bpe.encode(custom_text)
     # sp_decoded_bpe = sp_tokenizer_bpe.decode(sp_encoded_bpe)
 
-    sp_encoded_unigram = sp_tokenizer_unigram.encode(custom_text)
-    sp_decoded_unigram = sp_tokenizer_unigram.decode(sp_encoded_unigram)
+    # sp_encoded_unigram = sp_tokenizer_unigram.encode(custom_text)
+    # sp_decoded_unigram = sp_tokenizer_unigram.decode(sp_encoded_unigram)
 
     # print("Custom Tokenizer:")
     # print(f"Text: {custom_text}")
@@ -338,14 +501,14 @@ if __name__ == "__main__":
     # print("Decoded:", sp_decoded_bpe)
 
     # print("\nSentencePiece Tokenizer (Unigram):")
-    print(f"Text: {custom_text}")
-    print("Encoded:", sp_encoded_unigram)
-    print("Decoded:", sp_decoded_unigram)
-    print(sp_tokenizer_unigram.decode([3]))
-    print(sp_tokenizer_unigram.encode("異體字字"))
-    print(sp_tokenizer_unigram.unk_token_id)
-    print(sp_tokenizer_unigram.vocab_size)
-    encoded = sp_tokenizer_unigram.encode("To jest przykładowy tekst do tokenizacji dupadupadupajas")
+    # print(f"Text: {custom_text}")
+    # print("Encoded:", sp_encoded_unigram)
+    # print("Decoded:", sp_decoded_unigram)
+    # print(sp_tokenizer_unigram.decode([3]))
+    # print(sp_tokenizer_unigram.encode("異體字字"))
+    # print(sp_tokenizer_unigram.unk_token_id)
+    # print(sp_tokenizer_unigram.vocab_size)
+    # encoded = sp_tokenizer_unigram.encode("To jest przykładowy tekst do tokenizacji dupadupadupajas")
     # decoded = sp_tokenizer_unigram.decode(encoded)
     # print(f"Encoded: {encoded}")
     # print(f"Decoded: {decoded}")

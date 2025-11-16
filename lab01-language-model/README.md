@@ -56,7 +56,7 @@ python llm_train.py --model_type transformer --tokenizer speakleash/Bielik-4.5B-
 
 - `model_type` - Architecture type: `transformer` or `rnn`
 - `tokenizer` - Tokenizer name or path
-- `tokenizer_type` - Tokenizer type: `transformers`, `sentencepiece`, or `custom` (whitespace)
+- `tokenizer_type` - Tokenizer type: `transformers`, `sentencepiece`, `tiktoken` or `custom` (whitespace)
 - `dataset_name` - Name of dataset from Speakleash
 - `max_training_minutes` - Maximum training duration in minutes
 

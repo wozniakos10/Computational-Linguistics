@@ -1,9 +1,11 @@
-from transformer_based_llm import generate_text_simple
+import json
+import time
+
 import torch
 from transformers import AutoTokenizer
-from utils import text_to_token_ids, token_ids_to_text, get_model_config, get_model
-import time
-import json
+
+from transformer_based_llm import generate_text_simple
+from utils import get_model, get_model_config, get_tokenizer, text_to_token_ids, token_ids_to_text
 
 
 def test_transformer_inference_time():
@@ -15,7 +17,13 @@ def test_transformer_inference_time():
 
     print("Using device:", device)
     # mapping to load model saved with CUDA on CPU or MPS
-    model.load_state_dict(torch.load("models/transformer/best_model_checkpoint.pth", map_location=torch.device(device), weights_only=True))
+    model.load_state_dict(
+        torch.load(
+            "models/transformer_whistespace_tokenizer/best_model_checkpoint.pth",
+            map_location=torch.device(device),
+            weights_only=True,
+        )
+    )
     model.to(device).eval()
     prompt = "Mój"
     encoded = text_to_token_ids(prompt, tokenizer).to(device)
@@ -37,7 +45,7 @@ def test_transformer_inference_time():
 
 
 def test_transformer_inference_quality():
-    tokenizer = AutoTokenizer.from_pretrained("speakleash/Bielik-4.5B-v3")
+    tokenizer = get_tokenizer("tokenizers/custom_tokenizer_vocab.json", tokenizer_type="custom")
     vocab_size = tokenizer.n_vocab if hasattr(tokenizer, "n_vocab") else tokenizer.vocab_size
     TRANSFORMER_MODEL_CONFIG = get_model_config("transformer", vocab_size=vocab_size)
     model = get_model("transformer", TRANSFORMER_MODEL_CONFIG)
@@ -45,29 +53,23 @@ def test_transformer_inference_quality():
 
     print("Using device:", device)
     # mapping to load model saved with CUDA on CPU or MPS
-    model.load_state_dict(torch.load("models/transformer/best_model_checkpoint.pth", map_location=torch.device(device), weights_only=True))
-    model.to(device).eval()
-    prompt = "Mój"
-    encoded = text_to_token_ids(prompt, tokenizer).to(device)
-    generated_ids = generate_text_simple(
-        model,
-        encoded,
-        TRANSFORMER_MODEL_CONFIG["max_new_tokens"],
-        TRANSFORMER_MODEL_CONFIG["context_length"],
-        use_sampling=True,
-        temperature=3,
+    model.load_state_dict(
+        torch.load(
+            "models/transformer_sentence_piece/best_model_checkpoint.pth",
+            map_location=torch.device(device),
+            weights_only=True,
+        )
     )
-    # prompts = [
-    #     "",
-    #     "Polska to piękny kraj.",
-    #     "W Polsce znajduje się wiele zabytków.",
-    #     "Wawel to zamek królewski w Krakowie.",
-    #
+    model.to(device).eval()
+
     prompts = [
-        "Polska to piękny kraj polozony w eruopie srodkowej nad rzeka wisla. Nasza historia sięga 966 roku kiedy mieszko 1 przyjął chrzest."
+        "Polska to piękny kraj.",
+        "W Polsce znajduje się wiele zabytków.",
+        "Polska to piękny kraj polozony w eruopie srodkowej nad rzeka wisla. Nasza historia sięga 966 roku kiedy mieszko 1 przyjął chrzest.",
     ]
+
     data = {}
-    temperatures = [0.7, 1.0, 1.3]
+    temperatures = [0.5, 1.0, 1.5]
     for temp in temperatures:
         data[temp] = {}
         data[temp]["prompts"] = []
@@ -76,6 +78,8 @@ def test_transformer_inference_quality():
             print(f"Generating for temperature {temp}, prompt: '{p}'")
             data[temp]["prompts"].append(p)
             encoded = text_to_token_ids(p, tokenizer).to(device)
+            encoded = encoded.long()
+
             generated_ids = generate_text_simple(
                 model,
                 encoded,
