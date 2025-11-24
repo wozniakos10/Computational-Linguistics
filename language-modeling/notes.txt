@@ -1,0 +1,1 @@
+pip install evaluate matplotlib scikit-learn wandb tiktoken transformers speakleash hf_transfer
