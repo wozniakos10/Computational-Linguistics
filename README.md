@@ -4,7 +4,9 @@ This repository contains a set of exercises developed during course on AGH UST b
 
 # Content
 
-### [lab01-language-model](./lab01-language-model) - Creating Language Model based on Transformer and Recurrent Network architecture from scratch in PyTorch.
+### [language-modeling](./language-modeling) - Creating Language Model based on Transformer and Recurrent Network architecture from scratch in PyTorch.
 
 
-### [lab01-language-model](./lab01-language-model) - Tokenization Efficiency Benchmark.
+### [language-modeling](./language-modeling) - Tokenization Efficiency Benchmark.
+
+### [language-modeling](./language-modeling) - Fine-Tuning vs. From-Scratch Training for Text Classification.
