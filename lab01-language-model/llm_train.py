@@ -90,9 +90,7 @@ def train_model_simple(
                     logger.info(f"Maximum training time of {max_training_minutes} minutes reached. Stopping training.")
                     return train_losses, val_losses, track_tokens_seen
 
-                train_loss, val_loss, train_perplexity, val_perplexity = evaluate_model(
-                    model, train_loader, val_loader, device, eval_iter, tokenizer
-                )
+                train_loss, val_loss, train_perplexity, val_perplexity = evaluate_model(model, train_loader, val_loader, device, eval_iter, tokenizer)
                 train_losses.append(train_loss)
                 val_losses.append(val_loss)
                 track_tokens_seen.append(tokens_seen)
@@ -172,9 +170,7 @@ def evaluate_test_model(
     encoded = text_to_token_ids(start_context, tokenizer).to(device)
 
     with torch.no_grad():
-        token_ids = generate_text_simple(
-            model=model, idx=encoded, max_new_tokens=max_new_tokens, context_size=context_size, use_sampling=True
-        )
+        token_ids = generate_text_simple(model=model, idx=encoded, max_new_tokens=max_new_tokens, context_size=context_size, use_sampling=True)
         decoded_text = token_ids_to_text(token_ids, tokenizer)
         # Generate sample text
     logger.info(f"\nSample text generation with context: '{start_context}'\ngenerated text: '{decoded_text.replace('\n', ' ')}'")

@@ -1,10 +1,12 @@
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Tuple
 
 import tiktoken
 import torch
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
+from transformers import AutoTokenizer
 
+from datasets import Dataset, DatasetDict, load_dataset
 from logger import get_configured_logger
 from utils import load_split_data
 
@@ -201,14 +203,81 @@ def create_all_speaklesh_dataloaders(
     Returns:
         tuple: (train_dataloader, val_dataloader, test_dataloader)
     """
-    train_dataloader = get_speaklesh_dataloader(
-        "train", batch_size, max_length, stride, train_ratio, val_ratio, num_workers, speakleash_dataset_name
+    train_dataloader = get_speaklesh_dataloader("train", batch_size, max_length, stride, train_ratio, val_ratio, num_workers, speakleash_dataset_name)
+    val_dataloader = get_speaklesh_dataloader("val", batch_size, max_length, stride, train_ratio, val_ratio, num_workers, speakleash_dataset_name)
+    test_dataloader = get_speaklesh_dataloader("test", batch_size, max_length, stride, train_ratio, val_ratio, num_workers, speakleash_dataset_name)
+
+    return train_dataloader, val_dataloader, test_dataloader
+
+
+# tokenizer function for jziebura/polish_youth_slang_classification dataset
+# should be adjust when different dataset is used
+
+
+def tokenize(examples: dict, tokenizer, max_length: int = 128) -> dict:
+    encoded_examples = tokenizer(
+        examples["tekst"],
+        padding="max_length",
+        truncation=True,
+        return_tensors="pt",
+        max_length=max_length,
+        padding_side="right",
+        return_attention_mask=True,
     )
-    val_dataloader = get_speaklesh_dataloader(
-        "val", batch_size, max_length, stride, train_ratio, val_ratio, num_workers, speakleash_dataset_name
+    encoded_examples["labels"] = torch.tensor(examples["sentyment"])
+    return encoded_examples
+
+
+def create_huggingface_dataloader(
+    dataset_name: str,
+    split: Literal["train", "validation", "test"],
+    tokenizer: AutoTokenizer,
+    max_length: int = 128,
+    batch_size: int = 4,
+    shuffle: bool = False,
+) -> DataLoader:
+    dataset_dict = load_dataset(dataset_name)
+    split_df = dataset_dict[split].to_pandas()
+    split_df["tekst"] = split_df["tekst"].apply(lambda x: x.strip())
+
+    dataset_tokenized = DatasetDict()
+    dataset_tokenized[split] = Dataset.from_pandas(split_df, split=split)
+    dataset_tokenized[split] = dataset_tokenized[split].map(tokenize, batched=True, fn_kwargs={"tokenizer": tokenizer, "max_length": max_length})
+    dataset_tokenized[split].set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
+
+    dataloader = torch.utils.data.DataLoader(dataset_tokenized[split], batch_size=batch_size, shuffle=shuffle)
+
+    return dataloader
+
+
+def create_all_huggingface_dataloader(
+    dataset_name: str, tokenizer: AutoTokenizer, max_length: int = 128, batch_size: int = 4
+) -> Tuple[DataLoader, DataLoader, DataLoader]:
+    train_dataloader = create_huggingface_dataloader(
+        dataset_name=dataset_name,
+        split="train",
+        tokenizer=tokenizer,
+        max_length=max_length,
+        batch_size=batch_size,
+        shuffle=True,
     )
-    test_dataloader = get_speaklesh_dataloader(
-        "test", batch_size, max_length, stride, train_ratio, val_ratio, num_workers, speakleash_dataset_name
+
+    val_dataloader = create_huggingface_dataloader(
+        dataset_name=dataset_name,
+        split="validation",
+        tokenizer=tokenizer,
+        max_length=max_length,
+        batch_size=batch_size,
+        shuffle=False,
+    )
+
+    test_dataloader = create_huggingface_dataloader(
+        dataset_name=dataset_name,
+        split="test",
+        tokenizer=tokenizer,
+        max_length=max_length,
+        batch_size=batch_size,
+        shuffle=False,
     )
 
     return train_dataloader, val_dataloader, test_dataloader

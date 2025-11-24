@@ -1,6 +1,6 @@
-# Lab 01: Language Modeling (+ Lab 02 Extensions)
+# Lab 01: Language Modeling (+ Lab 02 & Lab 03 Extensions)
 
-This directory contains implementations for training Polish language models from scratch. The code was initially developed for Lab 01 and later extended to support Lab 02 requirements without unnecessary duplication.
+This directory contains implementations for training Polish language models from scratch. The code was initially developed for Lab 01 and later extended to support Lab 02 and Lab 03 requirements without unnecessary duplication.
 
 ## Overview
 
@@ -21,6 +21,15 @@ Goal: Train custom tokenizers and compare training results across three differen
 
 **Note:** This codebase was extended to support Lab 02 requirements by adding tokenization capabilities, allowing the same implementation to be used for both laboratories.
 
+### Lab 03: Fine-tuning (Extensions)
+Goal: Compare two approaches to training decoder-only language models for full-text classification:
+- From-scratch training
+- Fine-tuning a pre-trained model
+
+[Lab 03 Instructions](https://github.com/apohllo/computational-linguistics/blob/main/3-fine-tuning.md)
+
+**Note:** This codebase was extended to support Lab 03 requirements.
+
 ## Data Source
 
 Polish language data is retrieved from [speakleash](https://github.com/speakleash/speakleash).
@@ -33,9 +42,16 @@ Polish language data is retrieved from [speakleash](https://github.com/speakleas
 - Modified solution to use previously saved datasets (TXT/JSONL files) instead of retrieving from Speakleash API each time
 - This improvement was necessary because retrieving data from the Speakleash API requires downloading the file manifest each time, even when the dataset is already downloaded to disk
 
+## Key Extensions for Lab 03
+
+- Added `classifier_train.py` file for training classifier
+- Added `classifier_inference.py` for testing classifier inference
+- Added `GPTModelSequenceClassifier` and `CustomDecoderClassifier` classes to `transformer_based_llm.py` file and in other useful places like `utils.py`
+- Added `create_huggingface_dataloader` to `dataset.py` for creating dataloader for datasets from Hugging Face
+
 ## File Structure
 
-- `dataset.py` - PyTorch dataloader for Speakleash data
+- `dataset.py` - PyTorch dataloader for Speakleash and Hugging Face data
 - `transformer_based_llm.py` - GPT-2-like architecture implemented in PyTorch
 - `rnn_based_llm.py` - RNN architecture implemented in PyTorch
 - `models.py` - Pydantic models for storing model, dataset, and training parameters
@@ -47,9 +63,21 @@ Polish language data is retrieved from [speakleash](https://github.com/speakleas
 
 ## Usage
 
-### Example Execution
+### Example Executions
+
+For training language model:
 ```bash
 python llm_train.py --model_type transformer --tokenizer speakleash/Bielik-4.5B-v3 --dataset_name plwiki --tokenizer_type transformers --max_training_minutes 120
+```
+
+For training decoder-based classifier:
+```bash
+python classifier_train.py \
+--model_type custom_gpt2 \
+--tokenizer speakleash/Bielik-1.5B-v3 \
+--tokenizer_type transformers \
+--dataset_name jziebura/polish_youth_slang_classification \
+--max_training_minutes 90
 ```
 
 ### Configurable Parameters
@@ -65,3 +93,5 @@ python llm_train.py --model_type transformer --tokenizer speakleash/Bielik-4.5B-
 A detailed report containing in-depth information and results for Lab 01 can be found in [Report](report.md).
 
 A detailed report containing in-depth information and results for Lab 02 can be found in [Report](report_lab02.md).
+
+A detailed report containing in-depth information and results for Lab 03 can be found in [Report](report_lab03.md).

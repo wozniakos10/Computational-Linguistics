@@ -5,6 +5,8 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "datasets>=4.4.1",
+    "evaluate>=0.4.6",
     "matplotlib>=3.10.7",
     "mlflow>=3.4.0",
     "notebook>=7.4.7",
@@ -23,7 +25,7 @@ dependencies = [
 ]
 
 [tool.ruff]
-line-length = 140
+line-length = 160
 
 [dependency-groups]
 dev = [

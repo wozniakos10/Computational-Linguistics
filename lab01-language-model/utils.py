@@ -1,5 +1,6 @@
 import json
 import os
+import time
 from typing import Literal
 
 import tiktoken
@@ -10,10 +11,14 @@ from transformers import AutoTokenizer
 
 from custom_tokenizers import SentencePieceTokenizer, SimpleTokenizer
 from logger import get_configured_logger
-from models import RnnModelConfig, TransformerModelConfig
+from models import (
+    CustomDecoderClassifierConfig,
+    RnnModelConfig,
+    TransformerModelClassifierConfig,
+    TransformerModelConfig,
+)
 from rnn_based_llm import RnnBasedModel
-from transformer_based_llm import GPTModel, generate_text_simple
-import time
+from transformer_based_llm import CustomDecoderClassifier, GPTModel, GPTModelSequenceClassifier, generate_text_simple
 
 logger = get_configured_logger("llm_train", log_file="logs/llm_train.log")
 
@@ -51,12 +56,54 @@ def get_model_config(model_type: Literal["rnn", "transformer"], vocab_size: int 
             emb_dim=768,
             n_heads=12,
             n_layers=12,
-            drop_rate=0.2,
+            drop_rate=0.4,
             qkv_bias=False,
             max_new_tokens=256,
         ).model_dump()
     else:
         raise ValueError(f"Unknown model type: {model_type}")
+
+
+def get_classifier_model_config(model_type: Literal["custom_gpt2", "hugging_face"], tokenizer, num_classes):
+    if model_type == "custom_gpt2":
+        return TransformerModelClassifierConfig(
+            vocab_size=tokenizer.vocab_size,
+            context_length=256,
+            emb_dim=128,
+            n_heads=4,
+            n_layers=8,
+            drop_rate=0.4,
+            qkv_bias=False,
+            num_classes=num_classes,
+        ).model_dump()
+    elif model_type == "hugging_face":
+        return CustomDecoderClassifierConfig(
+            vocab_size=tokenizer.vocab_size,
+            context_length=256,
+            num_classes=num_classes,
+            unfreeze_last_n_layers=3,
+        ).model_dump()
+
+    else:
+        raise ValueError(f"Model type: {model_type} is not suppoted.")
+
+
+def get_classifier_model(model_type: Literal["custom_gpt2", "hugging_face"], model_config: dict):
+    if model_type == "custom_gpt2":
+        logger.info("Initializing GPTModelSequenceClassifier model.")
+        return GPTModelSequenceClassifier(model_config)
+
+    elif model_type == "hugging_face":
+        logger.info("Initializing CustomDecoderClassifier with Bielik backbone...")
+        # hardcoded bielik for now
+        checkpoint_name = "speakleash/Bielik-1.5B-v3"
+        return CustomDecoderClassifier(
+            checkpoint=checkpoint_name,
+            num_labels=model_config["num_classes"],
+            unfreeze_last_n_layers=model_config["unfreeze_last_n_layers"],
+        )
+    else:
+        raise ValueError(f"Model type: {model_type} is not supported!")
 
 
 def get_tokenizer(tokenizer_name: str, tokenizer_type: Literal["tiktoken", "transformers", "sentence_piece", "custom"]):
@@ -136,9 +183,7 @@ def calc_loss_loader(data_loader, model, device, tokenizer, num_batches=None):
         num_batches = min(num_batches, len(data_loader))
     for i, (input_batch, target_batch) in enumerate(data_loader):
         if i < num_batches:
-            loss, per_per_token, per_per_char, per_per_word = calc_loss_batch(
-                input_batch, target_batch, model, device, tokenizer, calculate_perplexity=True
-            )
+            loss, per_per_token, per_per_char, per_per_word = calc_loss_batch(input_batch, target_batch, model, device, tokenizer, calculate_perplexity=True)
             total_loss += loss.item()
             perplexity_per_token += per_per_token
             perplexity_per_char += per_per_char
@@ -159,12 +204,8 @@ def calc_loss_loader(data_loader, model, device, tokenizer, num_batches=None):
 def evaluate_model(model, train_loader, val_loader, device, eval_iter, tokenizer):
     model.eval()
     with torch.no_grad():
-        train_loss, train_perp_token, train_perp_char, train_perp_word = calc_loss_loader(
-            train_loader, model, device, tokenizer, num_batches=eval_iter
-        )
-        val_loss, val_perp_token, val_perp_char, val_perp_word = calc_loss_loader(
-            val_loader, model, device, tokenizer, num_batches=eval_iter
-        )
+        train_loss, train_perp_token, train_perp_char, train_perp_word = calc_loss_loader(train_loader, model, device, tokenizer, num_batches=eval_iter)
+        val_loss, val_perp_token, val_perp_char, val_perp_word = calc_loss_loader(val_loader, model, device, tokenizer, num_batches=eval_iter)
     model.train()
     train_perplexity = {
         "per_token": train_perp_token,
@@ -188,9 +229,7 @@ def generate_and_print_sample(model: GPTModel, tokenizer, device, start_context,
         context_size = max_new_tokens
     encoded = text_to_token_ids(start_context, tokenizer).to(device)
     with torch.no_grad():
-        token_ids = generate_text_simple(
-            model=model, idx=encoded, max_new_tokens=max_new_tokens, context_size=context_size, use_sampling=True
-        )
+        token_ids = generate_text_simple(model=model, idx=encoded, max_new_tokens=max_new_tokens, context_size=context_size, use_sampling=True)
         decoded_text = token_ids_to_text(token_ids, tokenizer)
         logger.info(f"Sample text generation with context: '{start_context}'\ngenerated text: '{decoded_text.replace('\n', ' ')}'")
     model.train()

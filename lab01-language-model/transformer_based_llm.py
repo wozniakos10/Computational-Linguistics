@@ -4,6 +4,11 @@ import tiktoken
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
+from transformers import AutoModel
+
+from logger import get_configured_logger
+
+logger = get_configured_logger(__name__)
 
 
 class MultiHeadAttention(nn.Module):
@@ -167,34 +172,140 @@ class GPTModel(nn.Module):
         #     dropout=cfg["drop_rate"],
         #     activation="gelu"
         # )
+
         self.trf_blocks = nn.Sequential(*[TransformerBlock(cfg) for _ in range(cfg["n_layers"])])
 
         self.final_norm = nn.LayerNorm(cfg["emb_dim"])
         self.out_head = nn.Linear(cfg["emb_dim"], cfg["vocab_size"], bias=False)
 
     def forward(self, in_idx):
-        # #Just for make it work with torchsummary
-        # print(len(in_idx.shape))
-        # if len(in_idx.shape) == 3:
-        #     print("test")
-        #     _, batch_size, seq_len = in_idx.shape
-        # else:
         batch_size, seq_len = in_idx.shape
-        # print(f"in_idx.shape: {in_idx.shape}")
 
         tok_embeds = self.tok_emb(in_idx)
-        # print(f"tok_embeds.shape: {tok_embeds.shape}")
         pos_embeds = self.pos_emb(torch.arange(seq_len, device=in_idx.device))
-        # print(f"pos_embeds.shape: {pos_embeds.shape}")
         x = tok_embeds + pos_embeds  # Shape [batch_size, num_tokens, emb_size]
         x = self.drop_emb(x)
-        # print(f"x after emb dropout shape: {x.shape}")
         x = self.trf_blocks(x)
-        # print(f"x after transformer blocks shape: {x.shape}")
         x = self.final_norm(x)
-        # print(f"x after final norm shape: {x.shape}")
         logits = self.out_head(x)
-        # print(f"logits shape: {logits.shape}")
+        return logits
+
+
+class GPTModelSequenceClassifier(nn.Module):
+    def __init__(self, cfg):
+        super().__init__()
+        self.tok_emb = nn.Embedding(cfg["vocab_size"], cfg["emb_dim"])
+        self.pos_emb = nn.Embedding(cfg["context_length"], cfg["emb_dim"])
+        self.drop_emb = nn.Dropout(cfg["drop_rate"])
+
+        self.trf_blocks = nn.Sequential(*[TransformerBlock(cfg) for _ in range(cfg["n_layers"])])
+
+        self.final_norm = nn.LayerNorm(cfg["emb_dim"])
+
+        self.classifier_head = nn.Sequential(
+            nn.Linear(cfg["emb_dim"], cfg["emb_dim"]),
+            nn.GELU(),
+            nn.Dropout(cfg["drop_rate"]),
+            nn.Linear(cfg["emb_dim"], cfg["num_classes"]),
+        )
+
+    def forward(self, input_ids, attention_mask=None):
+        batch_size, seq_len = input_ids.shape
+
+        tok_embeds = self.tok_emb(input_ids)
+        pos_embeds = self.pos_emb(torch.arange(seq_len, device=input_ids.device))
+        x = tok_embeds + pos_embeds
+        x = self.drop_emb(x)
+        x = self.trf_blocks(x)
+        x = self.final_norm(x)
+
+        # Find last non padding token representation for each sequence in the batch
+        if attention_mask is not None:
+            # Sum of attention_mask gives the number of real tokens
+            # Subtract 1 because we index from 0
+            sequence_lengths = attention_mask.sum(dim=1) - 1
+
+            # Get the representation of the last real tokens
+            batch_indices = torch.arange(batch_size, device=input_ids.device)
+            last_token_hidden = x[batch_indices, sequence_lengths]
+        else:
+            # Fallback - use the last token (as before)
+            last_token_hidden = x[:, -1, :]
+
+        classification_logits = self.classifier_head(last_token_hidden)
+
+        return classification_logits
+
+
+class CustomDecoderClassifier(nn.Module):
+    def __init__(self, checkpoint, num_labels, unfreeze_last_n_layers=3):
+        super().__init__()
+
+        # 1. Load backbone
+        self.backbone = AutoModel.from_pretrained(checkpoint)
+
+        # --- (FREEZING) ---
+
+        # Freeze all weights in the backbone
+        for param in self.backbone.parameters():
+            param.requires_grad = False
+
+        # Find transformer layers in the backbone
+        if hasattr(self.backbone, "layers"):
+            layers_to_train = self.backbone.layers
+        elif hasattr(self.backbone, "h"):  # Deal with gpt2
+            layers_to_train = self.backbone.h
+        else:
+            raise AttributeError("Can't find transformer layers in the backbone model.")
+
+        # Step C: Unfreeze the last X layers
+        # Take a slice [-5:] and set requires_grad = True
+        if unfreeze_last_n_layers > 0:
+            for layer in layers_to_train[-unfreeze_last_n_layers:]:
+                for param in layer.parameters():
+                    param.requires_grad = True
+
+            # Unfreezing also the final layer norm if present
+            if hasattr(self.backbone, "norm"):
+                for param in self.backbone.norm.parameters():
+                    param.requires_grad = True
+            elif hasattr(self.backbone, "ln_f"):  # GPT-2
+                for param in self.backbone.ln_f.parameters():
+                    param.requires_grad = True
+
+        logger.info(f"Successfully froze backbone and unfroze last {unfreeze_last_n_layers} layers.")
+        # ------------------------------------
+
+        hidden_size = self.backbone.config.hidden_size
+
+        # 2. Custom classifier head
+        self.classifier = nn.Sequential(nn.Linear(hidden_size, 512), nn.LayerNorm(512), nn.GELU(), nn.Dropout(0.4), nn.Linear(512, num_labels))
+
+    def forward(self, input_ids, attention_mask=None):
+        # Flow through backbone
+        # output.last_hidden_state has shape [batch_size, seq_len, hidden_size]
+        outputs = self.backbone(input_ids=input_ids, attention_mask=attention_mask)
+        last_hidden_state = outputs.last_hidden_state
+
+        # 3. Extract the correct vector (last token representation)
+        if attention_mask is not None:
+            # Calculate indices of the last tokens (non-padding)
+            # -1 because indices are zero-based
+            last_token_indices = attention_mask.sum(dim=1) - 1
+            batch_size = input_ids.shape[0]
+
+            # Get the representation of the last real tokens
+            batch_indices = torch.arange(batch_size, device=input_ids.device)
+            # Select the appropriate vectors for each element in the batch
+            # Fancy indexing: [0..batch, last_indices, :]
+            embedding = last_hidden_state[batch_indices, last_token_indices]
+        else:
+            # If there is no mask (no padding), simply take the last element
+            embedding = last_hidden_state[:, -1, :]
+
+        # 4. Flow through the head
+        logits = self.classifier(embedding)
+
         return logits
 
 
