@@ -297,7 +297,6 @@ class CustomDecoderClassifier(nn.Module):
             # Get the representation of the last real tokens
             batch_indices = torch.arange(batch_size, device=input_ids.device)
             # Select the appropriate vectors for each element in the batch
-            # Fancy indexing: [0..batch, last_indices, :]
             embedding = last_hidden_state[batch_indices, last_token_indices]
         else:
             # If there is no mask (no padding), simply take the last element
