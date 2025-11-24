@@ -1692,7 +1692,7 @@ wheels = [
 ]
 
 [[package]]
-name = "lab01-language-model"
+name = "language-modeling"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
