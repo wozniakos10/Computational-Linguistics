@@ -1,0 +1,33 @@
+[project]
+name = "language-modeling"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "datasets>=4.4.1",
+    "evaluate>=0.4.6",
+    "matplotlib>=3.10.7",
+    "mlflow>=3.4.0",
+    "notebook>=7.4.7",
+    "pandas>=2.3.3",
+    "pre-commit>=4.3.0",
+    "pydantic>=2.12.2",
+    "ruff>=0.14.0",
+    "sentencepiece>=0.2.1",
+    "speakleash>=0.3.51",
+    "tiktoken>=0.12.0",
+    "torch>=2.8.0,<2.9.0",
+    "torchinfo>=1.8.0",
+    "torchmetrics>=1.8.2",
+    "torchsummary>=1.5.1",
+    "transformers>=4.57.1",
+]
+
+[tool.ruff]
+line-length = 140
+
+[dependency-groups]
+dev = [
+    "wandb>=0.22.2",
+]

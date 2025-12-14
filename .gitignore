@@ -224,3 +224,6 @@ logs/
 
 train_datasets/
 test_notebooks/
+
+**/train_datasets/
+**/wandb
