@@ -1,0 +1,13 @@
+{
+    "task_description": "Answer the following questions from different knowledge domains. Be precise and provide only factually correct information. If you're not certain, indicate your uncertainty.\n\n1. HISTORY: In what year did the Berlin Wall fall, and which two countries did it separate?\n\n2. SCIENCE: What is the chemical symbol for gold, and what is its atomic number?\n\n3. GEOGRAPHY: What is the longest river in South America, and approximately how long is it in kilometers?\n\nProvide concise, accurate answers for each question.",
+    "qwen2.5:1.5b": {
+        "zero_shot": "1. HISTORY:\n   The Berlin Wall fell on November 9, 1989. It separated East Germany from West Germany.\n\n2. SCIENCE:\n   The chemical symbol for gold is Au (in the periodic table). Its atomic number is 79.\n\n3. GEOGRAPHY:\n   The longest river in South America is the Amazon River. It is approximately 6, 400 kilometers long.",
+        "few_shot": "1. HISTORICAL GEOGRAPHY: The Berlin Wall fell on November 9, 1989, separating the German Democratic Republic (GDR) from the Federal Republic of Germany (FRG).\n\n2. CHEMISTRY: The chemical symbol for gold is Au and its atomic number is 79.\n\n3. GEOMETRY: The longest river in South America is the River Amazon. It is approximately 6,400 kilometers long.",
+        "cot": "### History\n\nThe Berlin Wall fell on November 9, 1989. The wall separated East Germany from West Germany.\n\n### Science\n\nGold has the chemical symbol \"Au\" and its atomic number is 79.\n\n### Geography\n\nThe longest river in South America is the Amazon River. It is approximately 6,400 kilometers (3,965 miles) long."
+    },
+    "qwen3:14b": {
+        "zero_shot": "1. **HISTORY**: The Berlin Wall fell in **1989**, separating **East Germany** (German Democratic Republic) and **West Germany** (Federal Republic of Germany).  \n2. **SCIENCE**: The chemical symbol for gold is **Au**, and its atomic number is **79**.  \n3. **GEOGRAPHY**: The longest river in South America is the **Amazon River**, approximately **6,400 kilometers** long.",
+        "few_shot": "1. HISTORY: The Berlin Wall fell in **1989**, separating **East Germany** (German Democratic Republic) and **West Germany** (Federal Republic of Germany).  \n\n2. SCIENCE: The chemical symbol for gold is **Au**, and its atomic number is **79**.  \n\n3. GEOGRAPHY: The longest river in South America is the **Amazon River**, approximately **6,400 kilometers** (4,000 miles) long.",
+        "cot": null
+    }
+}
