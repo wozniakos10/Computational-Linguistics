@@ -12,3 +12,6 @@ This repository contains a set of exercises developed during course on AGH UST b
 ### [language-modeling](./language-modeling) - Fine-Tuning vs. From-Scratch Training for Text Classification.
 
 ### [efficient-attention](./efficient-attention) - Memory-Efficient Transformer Training Techniques.
+
+
+### [llm-eval](./llm-eval) - Evaluating Large Language Models with Diverse Prompting Strategies.
