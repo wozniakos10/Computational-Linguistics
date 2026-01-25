@@ -346,8 +346,6 @@ def main():
     os.makedirs(run_dir, exist_ok=True)
     logger.info(f"Run directory created: {run_dir}")
 
-    # --- Define W&B Metrics for Custom X-Axis ---
-    # Removed as per user request (using explicit step argument instead)
 
     # --- Data ---
     # 100k train, 1k val from train split

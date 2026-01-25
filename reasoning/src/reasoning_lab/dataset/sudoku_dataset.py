@@ -20,7 +20,6 @@ class SudokuDataset(Dataset):
         self.augment_data = augment
 
         # Load dataset from HuggingFace
-        # sapientinc/sudoku-extreme has 'train', 'test' splits
         ds = load_dataset("sapientinc/sudoku-extreme", split=split)
 
         # Select subset

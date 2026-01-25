@@ -26,14 +26,12 @@ from reasoning_lab.llm.prompts import SudokuPrompts
 TEST_SAMPLE_IDS = [0, 10, 20, 30, 40]
 
 # LLM names to evaluate
-# "gemini_2_5_flash"
-# "gpt_oss_120b",
 LLM_NAMES = [
     "gpt_oss_120b",
     "claude_opus_4_5",
     "gemini_2_5_flash",
 ]
-# LLM_NAMES = ["claude_opus_4_5"]
+
 
 # Prompt strategies
 STRATEGIES = ["zero_shot", "few_shot"]
@@ -74,7 +72,7 @@ def create_llm_client(llm_name: str):
             api_key=llm_config["api_key"],
             temperature=1,
             max_tokens=20000,
-            # thinking={"type": "enabled", "budget_tokens": 1024},
+            thinking={"type": "enabled", "budget_tokens": 1024},
             effort="high",
         )
     # Ollama models (Qwen via Ollama)
