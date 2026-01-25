@@ -15,3 +15,6 @@ This repository contains a set of exercises developed during course on AGH UST b
 
 
 ### [llm-eval](./llm-eval) - Evaluating Large Language Models with Diverse Prompting Strategies.
+
+
+### [reasoning](./reasoning) - Training Tiny Recursive Model for Sudoku solving.
